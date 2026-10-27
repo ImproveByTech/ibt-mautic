@@ -120,6 +120,7 @@ phpstan.neon.dist
 !/plugins/MauticSocialBundle
 !/plugins/MauticZapierBundle
 !/plugins/MauticTagManagerBundle
+!/plugins/CustomObjectsBundle
 !/plugins/index.html
 !/plugins/.gitkeep
 

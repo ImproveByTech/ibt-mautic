@@ -1,0 +1,53 @@
+{
+    "name": "acquia/mc-cs-plugin-custom-objects",
+    "description": "This plugin adds custom objects feature.",
+    "type": "mautic-plugin",
+    "config": {
+        "process-timeout": 2000
+    },
+    "keywords": [
+        "custom",
+        "objects",
+        "mautic",
+        "plugin"
+    ],
+    "extra": {
+        "install-directory-name": "CustomObjectsBundle",
+        "display-name": "Custom Objects"
+    },
+    "license": "GPL-3.0-or-later",
+    "authors": [
+        {
+            "name": "Acquia Engineering",
+            "email": "engineering@acquia.com",
+            "homepage": "https://www.acquia.com",
+            "role": "Maintainer"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/acquia/mc-cs-plugin-custom-objects/issues",
+        "wiki": "https://github.com/acquia/mc-cs-plugin-custom-objects/wiki"
+    },
+    "require": {
+        "php": ">=8.0",
+        "ext-mbstring": "*",
+        "mautic/core-lib": "^5.0",
+        "theofidry/alice-data-fixtures": "^1.1"
+    },
+    "scripts": {
+        "test": [
+            "@phpunit",
+            "@csfixer"
+        ],
+        "quicktest": [
+            "@unit",
+            "@csfixer"
+        ],
+        "phpunit": "../../bin/phpunit -d memory_limit=2048M --bootstrap ../../vendor/autoload.php --configuration phpunit.xml --fail-on-warning --testsuite=all",
+        "unit": "../../bin/phpunit -d memory_limit=2048M --bootstrap ../../vendor/autoload.php --configuration phpunit.xml --fail-on-warning --testsuite=unit",
+        "functional": "../../bin/phpunit -d memory_limit=2048M --bootstrap ../../vendor/autoload.php --configuration phpunit.xml --fail-on-warning --testsuite=functional",
+        "coverage": "../../bin/phpunit -d memory_limit=2048M --bootstrap ../../vendor/autoload.php --configuration phpunit.xml --fail-on-warning --testsuite=all --coverage-text --coverage-html=Tests/Coverage",
+        "csfixer": "../../bin/php-cs-fixer fix . -v --dry-run --diff --using-cache=no --config=../../.php-cs-fixer.php",
+        "fixcs": "../../bin/php-cs-fixer fix . -v --using-cache=no --config=../../.php-cs-fixer.php"
+    }
+}

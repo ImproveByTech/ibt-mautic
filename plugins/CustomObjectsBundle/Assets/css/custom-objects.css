@@ -1,0 +1,20 @@
+.fa.form-control-feedback {
+    line-height: 32px;
+    right: 15px;
+}
+
+.panel .btn-group {
+    z-index: 1000;
+}
+
+input[type=checkbox].form-control {
+    height: auto;
+}
+
+.drop-here input {
+    width: 100% !important;
+}
+
+.drop-here input[type="radio"] {
+    width: initial !important;
+}

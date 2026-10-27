@@ -1,0 +1,119 @@
+<?php
+
+declare(strict_types=1);
+
+namespace MauticPlugin\CustomObjectsBundle\EventListener;
+
+use Mautic\CoreBundle\CoreEvents;
+use Mautic\CoreBundle\Event\CustomContentEvent;
+use Mautic\LeadBundle\Entity\Lead;
+use MauticPlugin\CustomObjectsBundle\Entity\CustomObject;
+use MauticPlugin\CustomObjectsBundle\Model\CustomObjectModel;
+use MauticPlugin\CustomObjectsBundle\Provider\ConfigProvider;
+use MauticPlugin\CustomObjectsBundle\Provider\CustomItemRouteProvider;
+use MauticPlugin\CustomObjectsBundle\Provider\SessionProviderFactory;
+use MauticPlugin\CustomObjectsBundle\Repository\CustomItemRepository;
+use Symfony\Component\EventDispatcher\EventSubscriberInterface;
+use Symfony\Contracts\Translation\TranslatorInterface;
+
+class ContactTabSubscriber implements EventSubscriberInterface
+{
+    /**
+     * @var CustomObject[]
+     */
+    private array $customObjects = [];
+
+    public function __construct(
+        private CustomObjectModel $customObjectModel,
+        private CustomItemRepository $customItemRepository,
+        private ConfigProvider $configProvider,
+        private TranslatorInterface $translator,
+        private CustomItemRouteProvider $customItemRouteProvider,
+        private SessionProviderFactory $sessionProviderFactory
+    ) {
+    }
+
+    /**
+     * @return mixed[]
+     */
+    public static function getSubscribedEvents(): array
+    {
+        return [
+            CoreEvents::VIEW_INJECT_CUSTOM_CONTENT => ['injectTabs', 0],
+        ];
+    }
+
+    public function injectTabs(CustomContentEvent $event): void
+    {
+        if (!$this->configProvider->pluginIsEnabled()) {
+            return;
+        }
+
+        if ($event->checkContext('@MauticLead/Lead/lead.html.twig', 'tabs')) {
+            $vars    = $event->getVars();
+            $objects = $this->customObjectModel->getMasterCustomObjects();
+
+            /** @var Lead $contact */
+            $contact = $vars['lead'];
+
+            /** @var CustomObject $object */
+            foreach ($objects as $object) {
+                $data = [
+                    'title' => $object->getNamePlural(),
+                    'count' => $this->customItemRepository->countItemsLinkedToContact($object, $contact),
+                    'tabId' => "custom-object-{$object->getId()}",
+                ];
+
+                $event->addTemplate('@CustomObjects/SubscribedEvents/Tab/link.html.twig', $data);
+            }
+
+            $event->addTemplate('@CustomObjects/SubscribedEvents/Tab/modal.html.twig');
+        }
+
+        if ($event->checkContext('@MauticLead/Lead/lead.html.twig', 'tabs.content')) {
+            $vars    = $event->getVars();
+            $objects = $this->getCustomObjects();
+
+            /** @var Lead $contact */
+            $contact    = $vars['lead'];
+            $entityType = 'contact';
+
+            /** @var CustomObject $object */
+            foreach ($objects as $object) {
+                $objectId        = (int) $object->getId();
+                $contactId       = (int) $contact->getId();
+                $sessionProvider = $this->sessionProviderFactory->createItemProvider($objectId, $entityType, $contactId);
+                $data            = [
+                    'customObjectId'    => $objectId,
+                    'currentEntityId'   => $contactId,
+                    'currentEntityType' => $entityType,
+                    'tabId'             => "custom-object-{$objectId}",
+                    'searchId'          => "list-search-{$objectId}",
+                    'searchValue'       => $sessionProvider->getFilter(),
+                    'linkHeader'        => $this->translator->trans('custom.item.link.existing.modal.header.contact', ['%object%' => $object->getNameSingular()]),
+                    'searchRoute'       => $this->customItemRouteProvider->buildListRoute($objectId, 1, $entityType, $contactId),
+                    'newRoute'          => $this->customItemRouteProvider->buildNewRouteWithRedirectToContact($objectId, $contactId),
+                    'linkRoute'         => $this->customItemRouteProvider->buildListRoute($objectId, 1, $entityType, $contactId, ['lookup' => 1, 'search' => '']),
+                    'namespace'         => $sessionProvider->getNamespace(),
+                ];
+
+                $event->addTemplate('@CustomObjects/SubscribedEvents/Tab/content.html.twig', $data);
+            }
+        }
+    }
+
+    /**
+     * Apart from fetching the custom object list this method also caches them to the memory and
+     * use the list from memory if called multiple times.
+     *
+     * @return CustomObject[]
+     */
+    private function getCustomObjects(): array
+    {
+        if (!$this->customObjects) {
+            $this->customObjects = $this->customObjectModel->fetchAllPublishedEntities();
+        }
+
+        return $this->customObjects;
+    }
+}
