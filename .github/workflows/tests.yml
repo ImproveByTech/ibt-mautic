@@ -58,7 +58,7 @@ jobs:
           - 8086:8080
 
     steps:
-    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Codecov needs access to previous commits, so we add fetch-depth: 0
       with:
         fetch-depth: 0
@@ -74,7 +74,7 @@ jobs:
           ${{ runner.os }}-phpunit-
 
     - name: Setup PHP, with composer and extensions
-      uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+      uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
       with:
         php-version: ${{ matrix.php-versions }}
         extensions: mbstring, xml, ctype, iconv, intl, pdo_sqlite, mysql, pdo_mysql
@@ -112,7 +112,7 @@ jobs:
 
     - name: Upload coverage report
       if: ${{ matrix.php-versions == '8.2' && matrix.db-types == 'mariadb:10.11' && github.repository == 'mautic/mautic' }}
-      uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+      uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
       with:
         files: ./coverage.xml
         fail_ci_if_error: true
@@ -121,7 +121,7 @@ jobs:
 
     - name: Save test results for future steps
       if: ${{ matrix.php-versions == '8.2' && matrix.db-types == 'mariadb:10.11' && github.repository == 'mautic/mautic' }}
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: test-results
         path: |
@@ -137,7 +137,7 @@ jobs:
 
     - name: Store log artifacts
       if: ${{ always() }}
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: logs-${{ matrix.php-versions }}-${{ env.DB_LOG_NAME }}
         path: ./var/logs/*
@@ -147,7 +147,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 0
 
@@ -162,7 +162,7 @@ jobs:
 
     - name: Upload test artifacts
       if: failure()
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: e2e-test-screenshots
         path: tests/_output
@@ -182,7 +182,7 @@ jobs:
     name: ${{ matrix.commands }} - ${{ matrix.php-versions }}
 
     steps:
-    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 0
 
@@ -220,7 +220,7 @@ jobs:
       uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
 
     - name: Setup PHP, with composer and extensions
-      uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+      uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
       with:
         php-version: ${{ matrix.php-versions }}
         extensions: mbstring, xml, ctype, iconv, intl, pdo_sqlite, mysql, pdo_mysql
