@@ -52,7 +52,7 @@ class GenerateSampleDataCommand extends Command
         parent::configure();
     }
 
-    protected function execute(InputInterface $input, OutputInterface $output)
+    protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $io       = new SymfonyStyle($input, $output);
         $enquirer = $this->getHelper('question');

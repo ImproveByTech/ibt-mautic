@@ -711,7 +711,7 @@ class CustomField extends FormEntity implements UniqueEntityInterface, UuidInter
      *
      * @return $this
      */
-    public function setIsPublished($isPublished)
+    public function setIsPublished($isPublished): static
     {
         parent::setIsPublished($isPublished);
 

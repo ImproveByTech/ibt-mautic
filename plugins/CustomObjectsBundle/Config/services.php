@@ -15,12 +15,13 @@ return function (ContainerConfigurator $configurator): void {
     $excludes = [
         'Provider/SessionProvider.php',
         'Report/ReportColumnsBuilder.php',
-        'Serializer/ApiNormalizer.php',
-        'Extension/CustomItemListeningExtension.php',
     ];
 
     $services->load('MauticPlugin\\CustomObjectsBundle\\', '../')
         ->exclude('../{'.implode(',', array_merge(MauticCoreExtension::DEFAULT_EXCLUDES, $excludes)).'}');
 
     $services->load('MauticPlugin\\CustomObjectsBundle\\Repository\\', '../Repository/*Repository.php');
+
+    // Legacy service id removed from Mautic 7 core, still referenced in config.php.
+    $services->alias('mautic.helper.export', Mautic\CoreBundle\Helper\ExportHelper::class);
 };

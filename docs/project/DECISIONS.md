@@ -5,6 +5,60 @@ setup and the few code patches it carries on top of upstream. Newest at
 the top. Link back here from commit messages when a
 decision changes.
 
+## Custom Objects plugin vendored into `plugins/CustomObjectsBundle` and ported to Mautic 7
+
+Needed for the Salesforce integration (see
+`docs/specs/2026-10-27-salesforce-integration.md`): non-profile Salesforce
+objects (ServiceContract, sales, custom objects) live in Mautic as custom
+objects linked to contacts, so they can drive campaigns, segments and
+email tokens.
+
+**Source:** `acquia/mc-cs-plugin-custom-objects`, branch `7.x`, commit
+`f9c3d1d9` (2025-07-02). Despite the name, that branch still declares
+`mautic/core-lib ^5.0` and did not boot on Mautic 7 / Symfony 7.4. It is
+copied in (not a Composer dependency, which would refuse the `^5.0`
+constraint) and unignored in the root `.gitignore`. **We own this copy
+now** — upstream changes have to be merged by hand.
+
+**Port changes (runtime code):**
+- Symfony 7 signatures: `DataTransformerInterface::transform()/
+  reverseTransform()` (`mixed`), `Command::execute(): int`,
+  `Constraint::validatedBy(): string` / `getTargets(): array|string`;
+  `CustomField::setIsPublished(): static` to match `FormEntity`.
+- `SessionProviderFactory` takes `RequestStack` instead of the removed
+  `session` service.
+- Legacy service id `mautic.helper.export` (gone from core) re-aliased to
+  `ExportHelper` in the plugin's `Config/services.php`. Note the legacy
+  `config.php` format treats any argument containing `\` as a literal
+  string, so class names can't be used there as references.
+- **API Platform 2 ("Core") integration deleted**
+  (`DataPersister/`, `Extension/CustomItemListeningExtension.php`,
+  `Serializer/ApiNormalizer.php` and their tests). Mautic 7 ships API
+  Platform 4, so these could never load; the plugin's
+  `/api/v2/custom_*` endpoints are therefore unavailable. The `@ApiResource`
+  docblock annotations on entities are left in place (inert). The
+  Salesforce sync talks to the plugin's models directly, not over that API.
+- Dead `CustomObjectsBundle::installAllTablesIfMissing()` removed (typed on
+  the removed `MauticFactory`, not called by Mautic 7). Tables are created
+  by `mautic:plugins:reload`, which `docker/entrypoint.sh` already runs on
+  every boot.
+
+**Port changes (tests):** `self::$container` → `static::getContainer()`.
+
+**Verified (2026-10-27, local PHP 8.2 + MySQL 8.4):** prod and test
+containers compile with the plugin; its 5 console commands register;
+functional suite 56 tests — remaining 10 errors / 3 failures are test-code
+incompatibilities (PHPUnit 10 removed `getDataSetAsString()`/`getName()`,
+non-static data providers, `client->restart()` drops the login in
+Mautic 7, fields persisted but not flushed used as collection keys), not
+plugin runtime errors. Unit suite still has ~155 errors from mocks of the
+removed `MauticFactory` and PHPUnit 10's removed `withConsecutive()` —
+test code only, not ported yet.
+
+**Not yet verified:** clicking through the admin UI on a real instance
+(create object/fields/items, segment filter, campaign condition, email
+token).
+
 ## Remote assets forward the click's campaign query params (core patch)
 
 `AssetBundle\Controller\PublicController::remoteRedirectResponse()` used to

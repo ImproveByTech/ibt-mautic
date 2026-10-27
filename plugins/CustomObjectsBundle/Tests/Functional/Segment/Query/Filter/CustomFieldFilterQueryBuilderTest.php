@@ -45,13 +45,13 @@ class CustomFieldFilterQueryBuilderTest extends MauticMysqlTestCase
         $this->setFixtureObjects($objects);
 
         /** @var CustomFieldTypeProvider $fieldTypeProvider */
-        $fieldTypeProvider = self::$container->get('custom_field.type.provider');
+        $fieldTypeProvider = static::getContainer()->get('custom_field.type.provider');
 
         /** @var EventDispatcherInterface $dispatcher */
-        $dispatcher = self::$container->get('event_dispatcher');
+        $dispatcher = static::getContainer()->get('event_dispatcher');
 
         /** @var CustomFieldRepository $customFieldRepository */
-        $customFieldRepository = self::$container->get('custom_field.repository');
+        $customFieldRepository = static::getContainer()->get('custom_field.repository');
 
         $queryHelper = new QueryFilterHelper(
             $this->em,

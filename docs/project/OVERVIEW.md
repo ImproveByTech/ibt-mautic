@@ -1,53 +1,82 @@
 # Project Overview
 
-This is the **impulsionantedigital/mautic** fork (branch `7.x`), running on
-**EasyPanel** (self-hosted Docker/Swarm PaaS) as three containers built from
-one image: `docker/Dockerfile`.
-
-**This same codebase/image is reused as a template for multiple separate
-client Mautic instances** (own domain, own DB, own set of `web`/`cron`/
-`worker` apps per client - e.g. `trilhasdearuanda.com.br`,
-`gpsdapena.com.br`), sharing one AWS SES SMTP user across clients. When
-deploying a new client on this stack, see
-`docs/project/DEPLOYMENT.md` and note the per-client gotcha in
-`docs/project/TROUBLESHOOTING.md` about SES sender verification being
-per-domain.
+**ImproveByTech/ibt-mautic** (branch `7.x`) — a Mautic 7 fork whose goal is
+a **bidirectional integration between Mautic and Salesforce**.
 
 This file is the always-loaded entry point for AI agents (see `CLAUDE.md`).
 It's meant to be short. For depth, follow the links below instead of
 duplicating detail here.
 
-- **`docs/project/DEPLOYMENT.md`** — step-by-step EasyPanel setup, env vars, first deploy.
+- **`docs/specs/2026-10-27-salesforce-integration.md`** — the main initiative: scope, approach, open questions. **Start here.**
 - **`docs/project/DECISIONS.md`** — why things are built the way they are, one entry per decision.
-- **`docs/project/TROUBLESHOOTING.md`** — every real incident hit in production so far, with root cause and fix.
+- **`docs/project/DEPLOYMENT.md`** — EasyPanel runbook inherited from the previous fork (see "Origin" below).
+- **`docs/project/TROUBLESHOOTING.md`** — incidents hit so far, symptom-first.
 - **`docs/specs/`** — specs for features/changes being planned. One file per initiative.
 - **`docs/brainstorm/`** — freeform exploration notes, not yet a spec.
 - **`AGENTS.md`** — upstream Mautic's own contributor guide (ddev, tests, coding standards). Keep this aligned with upstream; put fork-specific stuff here in `docs/` instead.
 
-## What this fork adds on top of stock Mautic 7
+## Goal
+
+Keep Mautic and Salesforce in sync in **both directions**:
+
+- **Mautic → Salesforce**: leads/contacts, companies, points/stage and
+  marketing activity (email opens/clicks, form submits, page hits) pushed
+  to Salesforce so sales sees engagement.
+- **Salesforce → Mautic**: leads/contacts/accounts and their updates pulled
+  into Mautic so campaigns/segments run on CRM data.
+
+## Approach
+
+Two layers, in this order of preference:
+
+1. **Native plugin first** — Mautic ships a Salesforce integration in
+   `plugins/MauticCrmBundle/` (`Integration/SalesforceIntegration.php`,
+   `Api/SalesforceApi.php`, plus `Integration/Salesforce/` and
+   `Api/Salesforce/`). Use and configure it for everything it already
+   covers.
+2. **Custom integrations on top** — whatever the native plugin can't do
+   (extra objects, custom field mappings, business rules, conflict
+   handling, triggers) goes into this fork's own code. Prefer a separate
+   IBT plugin under `plugins/` (built on `app/bundles/IntegrationsBundle`
+   where it fits) over patching `MauticCrmBundle` directly, so upstream
+   updates stay mergeable. Any core patch that is unavoidable must be
+   recorded in `docs/project/DECISIONS.md`.
+
+Non-profile Salesforce objects (ServiceContract, sales, custom objects)
+are stored as **Custom Objects** — `plugins/CustomObjectsBundle`, Acquia's
+plugin vendored and ported to Mautic 7 by us (we own that copy; see
+`docs/project/DECISIONS.md`). Its API Platform REST endpoints were removed
+in the port.
+
+The details, gaps and open questions live in the spec linked above.
+
+## Origin (inherited, reference only)
+
+This repo was cloned from `impulsionantedigital/mautic` on 2026-10-27. That
+fork was a Mautic deployment template for EasyPanel serving multiple client
+instances (`trilhasdearuanda.com.br`, `gpsdapena.com.br`). **Those clients
+are not part of this project.** What carries over is the code on top of
+stock Mautic 7, which still applies here:
 
 1. **`docker/` deployment**: a single `php:8.2-apache` image that runs as
    `web` (Apache), `cron` (supercronic), or `worker` (`messenger:consume`)
    depending on EasyPanel's "Command override" field. See
-   `docs/project/DECISIONS.md` for why each role works the way it does.
-2. **Amazon SES plugin enabled for production**: `etailors/mautic-amazon-ses`
-   + `symfony/amazon-mailer` moved from `require-dev` to `require` in
-   `composer.json` (they were unreachable in a `--no-dev` prod install and
-   weren't even in `composer.lock`). Mail transport and messenger queues are
-   controlled purely by environment variables (`MAUTIC_MAILER_DSN`,
+   `docs/project/DECISIONS.md`.
+2. **Amazon SES plugin in `require`**: `etailors/mautic-amazon-ses` +
+   `symfony/amazon-mailer`. Mail transport and messenger queues are
+   controlled purely by env vars (`MAUTIC_MAILER_DSN`,
    `MAUTIC_MESSENGER_DSN_EMAIL`, `MAUTIC_MESSENGER_DSN_HIT`,
-   `MAUTIC_MESSENGER_DSN_FAILED`), **not** by Mautic's admin UI — that UI
-   field writes to a `local.php` parameter nothing in this codebase reads
-   for actual sending.
-3. **Remote assets forward campaign query params**: a small core patch to
-   `AssetBundle\Controller\PublicController` so that clicking a remote
-   asset carries `utm_*`, `sck`, `gclid` etc. through to the destination
-   instead of dropping them at the redirect (Mautic's own `ct`/`stream` are
-   stripped). See `docs/project/DECISIONS.md`; upstreamable as a PR.
+   `MAUTIC_MESSENGER_DSN_FAILED`), **not** by Mautic's admin UI.
+3. **Remote assets forward campaign query params** (`utm_*`, `sck`,
+   `gclid`, …): small core patch to `AssetBundle\Controller\PublicController`.
 4. **`symfony/dom-crawler` + `symfony/css-selector` as runtime deps** of
-   `mautic/core-lib` (`app/composer.json`) — upstream only has them in
-   `require-dev`, which made every email save 500 under `--no-dev`. See
-   `docs/project/DECISIONS.md`; upstreamable as a PR.
+   `mautic/core-lib` — without them every email save 500s under `--no-dev`.
+
+Lessons from those deployments that still matter if this project is hosted
+the same way: async messenger broke email delivery and was reverted to
+`sync://` (root cause open — see TROUBLESHOOTING); no Docker `HEALTHCHECK`
+yet; backups were never automated. Sync jobs with Salesforce run from
+`cron`, so the `cron` role's health matters more here than it did before.
 
 ## Platform requirements (non-negotiable)
 
@@ -56,48 +85,11 @@ duplicating detail here.
 
 ## Current state (update this as things change)
 
-- Live and working at `https://mautic.trilhasdearuanda.com.br/` as of
-  2026-09-05, after a server reformat + clean redeploy. Custom domain DNS
-  and the media bind-mount split (see Decisions/Troubleshooting) were the
-  last two blockers, both resolved.
-- All three apps (`web`, `cron`, `worker`) are created and confirmed
-  running: cron jobs succeed every minute/5 minutes, real email delivery
-  tested and working (`mailer:test`).
-- **Async messenger tried, then turned back off (2026-09-05).**
-  `MAUTIC_MESSENGER_DSN_EMAIL`/`_HIT` were set to
-  `doctrine://default?queue_name=...` on all three apps, and `worker`
-  logs did confirm `Consuming messages from transports "email, hit,
-  failed"` — but test sends stopped arriving. Switching back to `sync://`
-  (removing/unsetting both vars) fixed delivery immediately. **Root cause
-  not yet diagnosed** — see `docs/project/TROUBLESHOOTING.md` for what's
-  known. Currently running in **sync mode**: `web`/`cron` send inline,
-  `worker` sits idle on the `failed` transport only, matching the original
-  default deploy. Don't re-enable async without checking `worker` logs
-  and the `messenger_messages` table during the test this time.
-- No Docker `HEALTHCHECK` yet — zero-downtime redeploys can have a brief
-  window where the domain shows "Service is not reachable" between the
-  old container stopping and the new one finishing boot. See
-  `docs/project/TROUBLESHOOTING.md`.
-- Second client (`gpsdapena.com.br`) deployed on the same pattern; test
-  email initially failed there (unverified SES sending domain, unrelated
-  to this codebase - see Troubleshooting), fixed by verifying the domain
-  in AWS SES.
-- **Backups: deferred, not yet automated (2026-09-06).** DB backup has a
-  native path (the MySQL service's own "Cópias de segurança" tab in
-  EasyPanel - not yet configured). File backup for `media/files`,
-  `media/images`, `media/dashboards` (real user data - not `media/assets`,
-  that one's a disposable build artifact, see Decisions) needs a
-  **host-level** `aws s3 sync` cron job, not EasyPanel's built-in "Criar
-  Backup de Volume" - confirmed by testing that EasyPanel's "Volume"
-  mount type does **not** share storage across apps even with an
-  identical name (each app gets its own isolated volume), which would
-  break the web/cron/worker sharing these Bind mounts provide. A full
-  script + host crontab setup was worked out (AWS CLI on the host, a
-  dedicated `mautic-backup` profile, `aws s3 sync` per client site) and
-  is ready to hand over again whenever this gets picked back up - ask for
-  it; it's intentionally not a repo file since it's host ops commands
-  with credentials, not application code.
-- An IAM access key for a `mautic` S3 user (bucket `mautic-selfhosted`,
-  `sa-east-1`) was shared in chat while planning the backup above. If
-  backups get set up later using that key, rotate it in IAM first since
-  it passed through a chat transcript.
+- 2026-10-27: repo moved to `ImproveByTech/ibt-mautic`, project redefined
+  around the Salesforce integration. Nothing Salesforce-specific built yet;
+  next step is evaluating the native plugin against the spec.
+- 2026-10-27: Custom Objects plugin installed and ported to Mautic 7 —
+  boots and passes its functional tests apart from test-code issues;
+  not yet exercised through the admin UI.
+- Hosting/environment for this project not yet defined (local ddev for
+  development; production target TBD).

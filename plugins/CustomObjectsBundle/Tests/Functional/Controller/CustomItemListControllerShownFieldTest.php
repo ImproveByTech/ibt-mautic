@@ -34,7 +34,7 @@ class CustomItemListControllerShownFieldTest extends MauticMysqlTestCase
     {
         parent::setUp();
 
-        $this->fieldFactory = self::$container->get('custom_object.custom_field_factory');
+        $this->fieldFactory = static::getContainer()->get('custom_object.custom_field_factory');
     }
 
     protected function beforeBeginTransaction(): void

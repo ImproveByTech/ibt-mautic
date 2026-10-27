@@ -543,7 +543,7 @@ $coParams = [
             'custom_object.session.provider_factory' => [
                 'class'     => MauticPlugin\CustomObjectsBundle\Provider\SessionProviderFactory::class,
                 'arguments' => [
-                    'session',
+                    'request_stack',
                     'mautic.helper.core_parameters',
                 ],
             ],
@@ -636,13 +636,6 @@ $coParams = [
             'custom_object.helper.token_formatter' => [
                 'class'     => MauticPlugin\CustomObjectsBundle\Helper\TokenFormatter::class,
             ],
-            'custom_object.data_persister.custom_item' => [
-                'class'     => MauticPlugin\CustomObjectsBundle\DataPersister\CustomItemDataPersister::class,
-                'tag'       => 'api_platform.data_persister',
-                'arguments' => [
-                    'mautic.custom.model.item',
-                ],
-            ],
         ],
     ],
     'parameters' => [
@@ -653,38 +646,5 @@ $coParams = [
         'custom_item_fetch_limit_per_lead'                                             => 15,
     ],
 ];
-
-if (interface_exists('ApiPlatform\\Core\\Api\\IriConverterInterface')) {
-    $coParams['services']['other']['api_platform.custom_object.serializer.api_normalizer_jsonld'] = [
-        'class'            => MauticPlugin\CustomObjectsBundle\Serializer\ApiNormalizer::class,
-        'decoratedService' => ['api_platform.jsonld.normalizer.item', 'api_platform.jsonld.normalizer.item.inner'],
-        'arguments'        => [
-            'api_platform.jsonld.normalizer.item.inner',
-            'custom_field.type.provider',
-            'mautic.custom.model.item',
-            'api_platform.iri_converter',
-            'doctrine.orm.entity_manager',
-        ],
-    ];
-    $coParams['services']['other']['api_platform.custom_object.serializer.api_normalizer_json'] = [
-        'class'            => MauticPlugin\CustomObjectsBundle\Serializer\ApiNormalizer::class,
-        'decoratedService' => ['api_platform.serializer.normalizer.item', 'api_platform.serializer.normalizer.item.inner'],
-        'arguments'        => [
-            'api_platform.serializer.normalizer.item.inner',
-            'custom_field.type.provider',
-            'mautic.custom.model.item',
-            'api_platform.iri_converter',
-            'doctrine.orm.entity_manager',
-        ],
-    ];
-    $coParams['services']['other']['api_platform.custom_object.custom_item.extension'] = [
-        'class'     => MauticPlugin\CustomObjectsBundle\Extension\CustomItemListeningExtension::class,
-        'arguments' => [
-            'mautic.helper.user',
-            'mautic.security',
-        ],
-        'tag' => 'api_platform.doctrine.orm.query_extension.collection',
-    ];
-}
 
 return $coParams;
