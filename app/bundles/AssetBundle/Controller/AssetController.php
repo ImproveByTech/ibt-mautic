@@ -2,6 +2,7 @@
 
 namespace Mautic\AssetBundle\Controller;
 
+use Mautic\AssetBundle\Entity\Asset;
 use Mautic\AssetBundle\Model\AssetModel;
 use Mautic\CoreBundle\Controller\FormController;
 use Mautic\CoreBundle\Exception\MediaStorageException;
@@ -13,6 +14,7 @@ use Mautic\CoreBundle\Service\FlashBag;
 use Mautic\PluginBundle\Helper\IntegrationHelper;
 use Oneup\UploaderBundle\Templating\Helper\UploaderHelper;
 use Symfony\Component\HttpFoundation\JsonResponse;
+use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -216,6 +218,23 @@ class AssetController extends FormController
     }
 
     /**
+     * After a failed storage push, remove the uploaded file that would otherwise stay orphaned on disk.
+     */
+    private function removeOrphanedLocalFile(Asset $entity): void
+    {
+        $path = $entity->getPath();
+        if (!$entity->isLocal() || null === $path || '' === $path) {
+            return;
+        }
+
+        $uploadDir = realpath((string) $this->coreParametersHelper->get('upload_dir'));
+        $file      = realpath((string) $entity->getAbsolutePath());
+        if (false !== $uploadDir && false !== $file && str_starts_with($file, $uploadDir.DIRECTORY_SEPARATOR) && is_file($file)) {
+            @unlink($file);
+        }
+    }
+
+    /**
      * Show a preview of the file.
      *
      * @param int $objectId
@@ -237,6 +256,11 @@ class AssetController extends FormController
         $stream        = $request->query->get('stream', $defaultStream);
 
         if ('1' === $download || '1' === $stream) {
+            if ($activeAsset->isRemote() && $activeAsset->getRemotePath()) {
+                // Never fetch a remote URL server-side (SSRF); let the browser go to it.
+                return new RedirectResponse($activeAsset->getRemotePath());
+            }
+
             try {
                 // set the uploadDir
                 $activeAsset->setUploadDir($this->coreParametersHelper->get('upload_dir'));
@@ -327,6 +351,7 @@ class AssetController extends FormController
                         $model->saveEntity($entity);
                     } catch (MediaStorageException $e) {
                         $valid = false;
+                        $this->removeOrphanedLocalFile($entity);
                         $this->addFlashMessage('mautic.asset.asset.error.storage', ['%error%' => $e->getMessage()], FlashBag::LEVEL_ERROR);
                     }
                 }
@@ -496,6 +521,7 @@ class AssetController extends FormController
                         $model->saveEntity($entity, $this->getFormButton($form, ['buttons', 'save'])->isClicked());
                     } catch (MediaStorageException $e) {
                         $valid = false;
+                        $this->removeOrphanedLocalFile($entity);
                         $this->addFlashMessage('mautic.asset.asset.error.storage', ['%error%' => $e->getMessage()], FlashBag::LEVEL_ERROR);
                     }
                 }

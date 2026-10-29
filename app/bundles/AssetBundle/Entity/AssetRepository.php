@@ -256,4 +256,38 @@ class AssetRepository extends CommonRepository
 
         return $asset;
     }
+
+    /**
+     * Whether another asset (different id) is stored with the same remote path.
+     */
+    public function existsOtherWithRemotePath(string $remotePath, ?int $excludeId): bool
+    {
+        $qb = $this->createQueryBuilder('a')
+            ->select('COUNT(a.id)')
+            ->where('a.remotePath = :remotePath')
+            ->setParameter('remotePath', $remotePath);
+        if (null !== $excludeId) {
+            $qb->andWhere('a.id != :id')->setParameter('id', $excludeId);
+        }
+
+        return (int) $qb->getQuery()->getSingleScalarResult() > 0;
+    }
+
+    /**
+     * Whether another asset (different id) is still local with the same path.
+     */
+    public function existsOtherLocalWithPath(string $path, ?int $excludeId): bool
+    {
+        $qb = $this->createQueryBuilder('a')
+            ->select('COUNT(a.id)')
+            ->where('a.path = :path')
+            ->andWhere('a.storageLocation = :local')
+            ->setParameter('path', $path)
+            ->setParameter('local', 'local');
+        if (null !== $excludeId) {
+            $qb->andWhere('a.id != :id')->setParameter('id', $excludeId);
+        }
+
+        return (int) $qb->getQuery()->getSingleScalarResult() > 0;
+    }
 }
