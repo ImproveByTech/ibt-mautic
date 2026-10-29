@@ -4,10 +4,12 @@ namespace Mautic\LeadBundle\Twig\Helper;
 
 use Mautic\CoreBundle\Exception\FileNotFoundException;
 use Mautic\CoreBundle\Helper\PathsHelper;
+use Mautic\CoreBundle\Storage\MediaStorage;
 use Mautic\CoreBundle\Twig\Helper\AssetsHelper;
 use Mautic\CoreBundle\Twig\Helper\GravatarHelper;
 use Mautic\LeadBundle\Entity\Lead;
 use Symfony\Component\Filesystem\Filesystem;
+use Symfony\Component\HttpFoundation\File\UploadedFile;
 
 final class AvatarHelper
 {
@@ -21,7 +23,35 @@ final class AvatarHelper
         private readonly PathsHelper $pathsHelper,
         private readonly GravatarHelper $gravatarHelper,
         private readonly DefaultAvatarHelper $defaultAvatarHelper,
+        private readonly MediaStorage $mediaStorage,
     ) {
+    }
+
+    public static function avatarKey(Lead|int $lead): string
+    {
+        $id = $lead instanceof Lead ? $lead->getId() : $lead;
+
+        return MediaStorage::IMAGES_PREFIX.'lead_avatars/avatar'.(int) $id;
+    }
+
+    /**
+     * Stores an avatar uploaded through the contact form.
+     */
+    public function storeUploadedAvatar(Lead $lead, UploadedFile $file): void
+    {
+        if ($this->mediaStorage->isEnabled()) {
+            $this->mediaStorage->putFile(self::avatarKey($lead), $file->getPathname());
+
+            return;
+        }
+
+        $avatarDir = $this->getAvatarPath(true);
+
+        if (!file_exists($avatarDir)) {
+            mkdir($avatarDir);
+        }
+
+        $file->move($avatarDir, 'avatar'.$lead->getId());
     }
 
     /**
@@ -35,15 +65,21 @@ final class AvatarHelper
             throw new FileNotFoundException();
         }
 
+        $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+        if (!in_array($ext, $this->imageTypes)) {
+            throw new \Exception('File is not image');
+        }
+
+        if ($this->mediaStorage->isEnabled()) {
+            $this->mediaStorage->putFile(self::avatarKey($lead), $filePath);
+
+            return;
+        }
+
         $avatarDir = $this->getAvatarPath(true);
 
         if (!file_exists($avatarDir)) {
             mkdir($avatarDir);
-        }
-
-        $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
-        if (!in_array($ext, $this->imageTypes)) {
-            throw new \Exception('File is not image');
         }
 
         $fs = new Filesystem();
@@ -59,7 +95,14 @@ final class AvatarHelper
         $socialData = $lead->getSocialCache();
         $leadEmail  = $lead->getEmail();
 
-        if ('custom' == $preferred) {
+        if ('custom' == $preferred && $this->mediaStorage->isEnabled()) {
+            // No existence check: it would cost a network call per avatar on list pages.
+            $img       = $this->mediaStorage->getPublicUrl(self::avatarKey($lead));
+            $timestamp = $lead->getDateModified()?->getTimestamp();
+            if (null !== $timestamp) {
+                $img .= '?'.$timestamp;
+            }
+        } elseif ('custom' == $preferred) {
             $avatarPath = $this->getAvatarPath(true).'/avatar'.$lead->getId();
             if (file_exists($avatarPath) && $fmtime = filemtime($avatarPath)) {
                 // Append file modified time to ensure the latest is used by browser

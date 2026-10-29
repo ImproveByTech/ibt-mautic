@@ -851,13 +851,8 @@ class LeadController extends FormController
     {
         $leadInformation = $request->files->get('lead', []);
         $file            = $leadInformation['custom_avatar'] ?? null;
-        $avatarDir       = $avatarHelper->getAvatarPath(true);
 
-        if (!file_exists($avatarDir)) {
-            mkdir($avatarDir);
-        }
-
-        $file->move($avatarDir, 'avatar'.$lead->getId());
+        $avatarHelper->storeUploadedAvatar($lead, $file);
 
         // remove the file from request
         $request->files->remove('lead');

@@ -63,6 +63,7 @@ return function (ContainerConfigurator $configurator): void {
     $services->alias('mautic.model.factory', Mautic\CoreBundle\Factory\ModelFactory::class);
     $services->alias('twig.helper.assets', Mautic\CoreBundle\Twig\Helper\AssetsHelper::class);
     $services->alias('transifex.factory', Mautic\CoreBundle\Factory\TransifexFactory::class);
+    $services->alias('mautic.storage.media', Mautic\CoreBundle\Storage\MediaStorage::class);
     $services->alias('mautic.helper.language', Mautic\CoreBundle\Helper\LanguageHelper::class);
     $services->alias('mautic.helper.email.address', Mautic\CoreBundle\Helper\EmailAddressHelper::class);
     $services->alias('mautic.helper.assetgeneration', Mautic\CoreBundle\Helper\AssetGenerationHelper::class);
