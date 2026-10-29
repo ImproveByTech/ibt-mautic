@@ -197,7 +197,8 @@ final class AssetMediaStorageSubscriberTest extends TestCase
     {
         $url = 'https://cdn.example.com/root/media/files/a.pdf';
         $this->storage->method('keyFromPublicUrl')->willReturn('media/files/a.pdf');
-        $this->repo->expects($this->once())->method('existsOtherWithRemotePath')->with($url, null)->willReturn(true);
+        $this->storage->method('getPublicUrl')->willReturnCallback(fn (string $k): string => 'https://cdn.example.com/root/'.$k);
+        $this->repo->expects($this->once())->method('getOtherRemotePathsWithPrefix')->willReturn([$url]);
         $this->storage->expects($this->never())->method('delete');
         $asset = new Asset();
         $asset->setStorageLocation('remote');
@@ -209,7 +210,6 @@ final class AssetMediaStorageSubscriberTest extends TestCase
     public function testDeleteSkippedForNonFilesPrefixKey(): void
     {
         $this->storage->method('keyFromPublicUrl')->willReturn('media/images/a.png');
-        $this->repo->method('existsOtherWithRemotePath')->willReturn(false);
         $this->storage->expects($this->never())->method('delete');
         $asset = new Asset();
         $asset->setStorageLocation('remote');
@@ -224,7 +224,8 @@ final class AssetMediaStorageSubscriberTest extends TestCase
         $asset->setRemotePath('https://cdn.example.com/root/media/files/old.pdf');
         $this->storage->method('putFile')->willReturn('https://cdn.example.com/root/media/files/new.pdf');
         $this->storage->method('keyFromPublicUrl')->willReturn('media/files/old.pdf');
-        $this->repo->method('existsOtherWithRemotePath')->willReturn(true);
+        $this->storage->method('getPublicUrl')->willReturnCallback(fn (string $k): string => 'https://cdn.example.com/root/'.$k);
+        $this->repo->method('getOtherRemotePathsWithPrefix')->willReturn(['https://cdn.example.com/root/media/files/old.pdf']);
         $this->storage->expects($this->never())->method('delete');
 
         $this->subscriber->onAssetPreSave(new AssetEvent($asset, false));
@@ -296,5 +297,57 @@ final class AssetMediaStorageSubscriberTest extends TestCase
         $this->subscriber->onAssetPreSave(new AssetEvent($asset, false));
 
         $this->assertFileExists($this->dir.'/stale.pdf');
+    }
+
+    public function testDeleteSkippedWhenAnotherAssetSharesTheObjectViaUrlVariant(): void
+    {
+        $base = 'https://cdn.example.com/root/';
+        $this->storage->method('getPublicUrl')->willReturnCallback(fn (string $k): string => $base.$k);
+        // Mirrors the real normalization: strip query/fragment, decode percent-encoding.
+        $this->storage->method('keyFromPublicUrl')->willReturnCallback(function (string $u) use ($base): ?string {
+            if (!str_starts_with($u, $base)) {
+                return null;
+            }
+            $p = explode('?', explode('#', substr($u, strlen($base)), 2)[0], 2)[0];
+
+            return rawurldecode($p);
+        });
+        $this->storage->expects($this->never())->method('delete');
+
+        foreach (['abc.pdf?x=1', 'ab%63.pdf'] as $variant) {
+            $this->repo = $this->createMock(AssetRepository::class);
+            $this->repo->method('getOtherRemotePathsWithPrefix')->willReturn([$base.'media/files/'.$variant]);
+            $params = $this->createMock(CoreParametersHelper::class);
+            $sub    = new AssetMediaStorageSubscriber($this->storage, $params, $this->repo, $this->logger);
+            $asset  = new Asset();
+            $asset->setStorageLocation('remote');
+            $asset->setRemotePath($base.'media/files/abc.pdf');
+
+            $sub->onAssetPostDelete(new AssetEvent($asset, false));
+        }
+    }
+
+    public function testRemotePathPointingAtOurBucketIsCanonicalized(): void
+    {
+        $this->storage->method('keyFromPublicUrl')->willReturn('media/files/abc.pdf');
+        $this->storage->method('getPublicUrl')->with('media/files/abc.pdf')->willReturn('https://cdn.example.com/root/media/files/abc.pdf');
+        $asset = new Asset();
+        $asset->setStorageLocation('remote');
+        $asset->setRemotePath('https://cdn.example.com/root/media/files/abc.pdf?x=1');
+
+        $this->subscriber->onAssetPreSave(new AssetEvent($asset, false));
+
+        $this->assertSame('https://cdn.example.com/root/media/files/abc.pdf', $asset->getRemotePath());
+    }
+
+    public function testOrphanRemovalDecision(): void
+    {
+        // New upload moved in: remove.
+        $this->assertTrue(AssetMediaStorageSubscriber::shouldRemoveOrphanedUpload(true, null, 'new.pdf', false));
+        // No new file (legacy local asset re-saved): never remove its only copy.
+        $this->assertFalse(AssetMediaStorageSubscriber::shouldRemoveOrphanedUpload(false, 'old.pdf', 'old.pdf', false));
+        $this->assertFalse(AssetMediaStorageSubscriber::shouldRemoveOrphanedUpload(true, 'same.pdf', 'same.pdf', false));
+        // Shared with another local asset: keep.
+        $this->assertFalse(AssetMediaStorageSubscriber::shouldRemoveOrphanedUpload(true, null, 'new.pdf', true));
     }
 }

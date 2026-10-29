@@ -258,19 +258,21 @@ class AssetRepository extends CommonRepository
     }
 
     /**
-     * Whether another asset (different id) is stored with the same remote path.
+     * Remote paths of other assets (different id) that start with the given URL prefix.
+     *
+     * @return list<string>
      */
-    public function existsOtherWithRemotePath(string $remotePath, ?int $excludeId): bool
+    public function getOtherRemotePathsWithPrefix(string $prefix, ?int $excludeId): array
     {
         $qb = $this->createQueryBuilder('a')
-            ->select('COUNT(a.id)')
-            ->where('a.remotePath = :remotePath')
-            ->setParameter('remotePath', $remotePath);
+            ->select('a.remotePath')
+            ->where('a.remotePath LIKE :prefix')
+            ->setParameter('prefix', addcslashes($prefix, '%_\\').'%');
         if (null !== $excludeId) {
             $qb->andWhere('a.id != :id')->setParameter('id', $excludeId);
         }
 
-        return (int) $qb->getQuery()->getSingleScalarResult() > 0;
+        return array_column($qb->getQuery()->getArrayResult(), 'remotePath');
     }
 
     /**

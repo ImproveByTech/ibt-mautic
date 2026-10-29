@@ -3,6 +3,7 @@
 namespace Mautic\AssetBundle\Controller;
 
 use Mautic\AssetBundle\Entity\Asset;
+use Mautic\AssetBundle\EventListener\AssetMediaStorageSubscriber;
 use Mautic\AssetBundle\Model\AssetModel;
 use Mautic\CoreBundle\Controller\FormController;
 use Mautic\CoreBundle\Exception\MediaStorageException;
@@ -220,10 +221,15 @@ class AssetController extends FormController
     /**
      * After a failed storage push, remove the uploaded file that would otherwise stay orphaned on disk.
      */
-    private function removeOrphanedLocalFile(Asset $entity): void
+    private function removeOrphanedLocalFile(Asset $entity, AssetModel $model, bool $hadNewFile, ?string $pathBefore): void
     {
         $path = $entity->getPath();
         if (!$entity->isLocal() || null === $path || '' === $path) {
+            return;
+        }
+
+        $usedByOther = $model->getRepository()->existsOtherLocalWithPath($path, $entity->getId());
+        if (!AssetMediaStorageSubscriber::shouldRemoveOrphanedUpload($hadNewFile, $pathBefore, $path, $usedByOther)) {
             return;
         }
 
@@ -343,6 +349,8 @@ class AssetController extends FormController
             if (!$cancelled = $this->isFormCancelled($form)) {
                 if ($valid = $this->isFormValid($form)) {
                     $entity->setUploadDir($parametersHelper->get('upload_dir'));
+                    $hadNewFile = null !== $entity->getFile();
+                    $pathBefore = $entity->getPath();
                     $entity->preUpload();
                     $entity->upload();
                     $entity->setDateModified(new \DateTime());
@@ -351,7 +359,7 @@ class AssetController extends FormController
                         $model->saveEntity($entity);
                     } catch (MediaStorageException $e) {
                         $valid = false;
-                        $this->removeOrphanedLocalFile($entity);
+                        $this->removeOrphanedLocalFile($entity, $model, $hadNewFile, $pathBefore);
                         $this->addFlashMessage('mautic.asset.asset.error.storage', ['%error%' => $e->getMessage()], FlashBag::LEVEL_ERROR);
                     }
                 }
@@ -513,6 +521,8 @@ class AssetController extends FormController
             if (!$cancelled = $this->isFormCancelled($form)) {
                 if ($valid = $this->isFormValid($form)) {
                     $entity->setUploadDir($this->coreParametersHelper->get('upload_dir'));
+                    $hadNewFile = null !== $entity->getFile();
+                    $pathBefore = $entity->getPath();
                     $entity->preUpload();
                     $entity->upload();
 
@@ -521,7 +531,7 @@ class AssetController extends FormController
                         $model->saveEntity($entity, $this->getFormButton($form, ['buttons', 'save'])->isClicked());
                     } catch (MediaStorageException $e) {
                         $valid = false;
-                        $this->removeOrphanedLocalFile($entity);
+                        $this->removeOrphanedLocalFile($entity, $model, $hadNewFile, $pathBefore);
                         $this->addFlashMessage('mautic.asset.asset.error.storage', ['%error%' => $e->getMessage()], FlashBag::LEVEL_ERROR);
                     }
                 }
