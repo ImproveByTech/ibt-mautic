@@ -415,20 +415,19 @@ final class FormUploaderTest extends \PHPUnit\Framework\TestCase
         try {
             $uploader->uploadFiles($crate, $submission);
         } finally {
-            @unlink($this->uploadDir.'/1/10/a.txt');
-            @unlink($this->uploadDir.'/2/20/b.txt');
+            array_map('unlink', array_merge(glob($this->uploadDir.'/1/10/*') ?: [], glob($this->uploadDir.'/2/20/*') ?: []));
             @rmdir($this->uploadDir.'/1/10');
             @rmdir($this->uploadDir.'/1');
             @rmdir($this->uploadDir.'/2/20');
             @rmdir($this->uploadDir.'/2');
         }
 
-        $this->assertSame([
-            'media/files/form/1/10/a.txt' => $this->uploadDir.'/1/10/a.txt',
-            'media/files/form/2/20/b.txt' => $this->uploadDir.'/2/20/b.txt',
-        ], $puts);
-        $this->assertSame([$this->uploadDir.'/1/10/a.txt', $this->uploadDir.'/2/20/b.txt'], $deleted);
-        $this->assertSame(['one' => 'a.txt', 'two' => 'b.txt'], $submission->getResults());
+        $this->assertCount(2, $puts);
+        $results = $submission->getResults();
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{16}-a\.txt$/', $results['one']);
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{16}-b\.txt$/', $results['two']);
+        $this->assertSame(['media/files/form/1/10/'.$results['one'], 'media/files/form/2/20/'.$results['two']], array_keys($puts));
+        $this->assertSame([$this->uploadDir.'/1/10/'.$results['one'], $this->uploadDir.'/2/20/'.$results['two']], $deleted);
     }
 
     public function testUploadFailureRollsBackPutObjectsAndThrowsFileUploadException(): void
@@ -447,7 +446,7 @@ final class FormUploaderTest extends \PHPUnit\Framework\TestCase
 
             return 'https://s3/'.$key;
         });
-        $storage->expects($this->once())->method('delete')->with('media/files/form/1/10/a.txt');
+        $storage->expects($this->once())->method('delete')->with($this->matchesRegularExpression('#^media/files/form/1/10/[0-9a-f]{16}-a\\.txt$#'));
 
         $deleted = [];
         $fileUploader->method('delete')->willReturnCallback(function ($path) use (&$deleted): void {
@@ -471,15 +470,14 @@ final class FormUploaderTest extends \PHPUnit\Framework\TestCase
         } catch (FileUploadException $e) {
             $this->assertSame('two', $e->getMessage());
         } finally {
-            @unlink($this->uploadDir.'/1/10/a.txt');
-            @unlink($this->uploadDir.'/1/11/b.txt');
+            array_map('unlink', array_merge(glob($this->uploadDir.'/1/10/*') ?: [], glob($this->uploadDir.'/1/11/*') ?: []));
             @rmdir($this->uploadDir.'/1/10');
             @rmdir($this->uploadDir.'/1/11');
             @rmdir($this->uploadDir.'/1');
         }
 
         // a.txt was already unlinked after its successful put; its rollback is the S3 delete above.
-        $this->assertContains($this->uploadDir.'/1/11/b.txt', $deleted);
+        $this->assertCount(3, $deleted);
         $this->assertSame([], $submission->getResults());
     }
 
@@ -670,5 +668,92 @@ final class FormUploaderTest extends \PHPUnit\Framework\TestCase
         $submission->method('getResults')->willReturn(['one' => 'a.txt']);
 
         $this->createEnabledUploader($storage, null, $logger)->deleteUploadedFiles($submission);
+    }
+
+    public function testSameOriginalNameInTwoSubmissionsGetsDistinctKeys(): void
+    {
+        $storage      = $this->createMock(MediaStorage::class);
+        $fileUploader = $this->createStub(FileUploader::class);
+        $fileUploader->method('upload')->willReturn('curriculo.pdf');
+        $uploader = $this->createEnabledUploader($storage, $fileUploader);
+
+        $keys = [];
+        $storage->method('putFile')->willReturnCallback(function (string $key) use (&$keys): string {
+            $keys[] = $key;
+
+            return $key;
+        });
+
+        @mkdir($this->uploadDir.'/1/10', 0777, true);
+        $names = [];
+        try {
+            for ($i = 0; $i < 2; ++$i) {
+                file_put_contents($this->uploadDir.'/1/10/curriculo.pdf', str_repeat('p', 64));
+                $crate = new UploadFileCrate();
+                $crate->addFile($this->createStub(UploadedFile::class), $this->createField(1, 10, 'cv'));
+                $submission = new Submission();
+                $submission->setResults([]);
+                $uploader->uploadFiles($crate, $submission);
+                $names[] = $submission->getResults()['cv'];
+            }
+        } finally {
+            array_map('unlink', glob($this->uploadDir.'/1/10/*') ?: []);
+            @rmdir($this->uploadDir.'/1/10');
+            @rmdir($this->uploadDir.'/1');
+        }
+
+        $this->assertCount(2, array_unique($keys));
+        $this->assertNotSame($names[0], $names[1]);
+    }
+
+    public function testStoredNameHasRandomPrefixAndKeepsExtension(): void
+    {
+        $storage      = $this->createMock(MediaStorage::class);
+        $fileUploader = $this->createStub(FileUploader::class);
+        $fileUploader->method('upload')->willReturn('curriculo.pdf');
+        $uploader = $this->createEnabledUploader($storage, $fileUploader);
+
+        @mkdir($this->uploadDir.'/1/10', 0777, true);
+        file_put_contents($this->uploadDir.'/1/10/curriculo.pdf', str_repeat('p', 64));
+        $crate = new UploadFileCrate();
+        $crate->addFile($this->createStub(UploadedFile::class), $this->createField(1, 10, 'cv'));
+        $submission = new Submission();
+        $submission->setResults([]);
+        try {
+            $uploader->uploadFiles($crate, $submission);
+        } finally {
+            array_map('unlink', glob($this->uploadDir.'/1/10/*') ?: []);
+            @rmdir($this->uploadDir.'/1/10');
+            @rmdir($this->uploadDir.'/1');
+        }
+
+        $name = $submission->getResults()['cv'];
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{16}-curriculo\.pdf$/', $name);
+        $this->assertTrue($uploader->isSafeFileName($name));
+    }
+
+    public function testCollisionRegeneratesNameOnceThenFails(): void
+    {
+        $storage      = $this->createMock(MediaStorage::class);
+        $fileUploader = $this->createStub(FileUploader::class);
+        $fileUploader->method('upload')->willReturn('cv.pdf');
+        $uploader = $this->createEnabledUploader($storage, $fileUploader);
+
+        $storage->expects($this->exactly(2))->method('exists')->willReturn(true);
+        $storage->expects($this->never())->method('putFile');
+        $storage->expects($this->never())->method('delete'); // never touch objects this request did not create
+
+        @mkdir($this->uploadDir.'/1/10', 0777, true);
+        file_put_contents($this->uploadDir.'/1/10/cv.pdf', str_repeat('p', 64));
+        $crate = new UploadFileCrate();
+        $crate->addFile($this->createStub(UploadedFile::class), $this->createField(1, 10, 'cv'));
+        try {
+            $this->expectException(FileUploadException::class);
+            $uploader->uploadFiles($crate, new Submission());
+        } finally {
+            array_map('unlink', glob($this->uploadDir.'/1/10/*') ?: []);
+            @rmdir($this->uploadDir.'/1/10');
+            @rmdir($this->uploadDir.'/1');
+        }
     }
 }

@@ -39,17 +39,21 @@ class FormUploader
                 $alias           = $field->getAlias();
                 $uploadDir       = $this->getUploadDir($field);
                 $fileName        = $this->fileUploader->upload($uploadDir, $fileFieldCrate->getUploadedFile());
-                $result[$alias]  = $fileName;
                 $uploadedFile    = $uploadDir.DIRECTORY_SEPARATOR.$fileName;
+                $uploadedFiles[] = $uploadedFile;
                 $this->fixRotationJPG($uploadedFile);
-                $uploadedFiles[] =$uploadedFile;
 
                 if ($this->mediaStorage->isEnabled()) {
-                    $key = $this->getFileKey($field, $fileName);
+                    // The local dir is emptied after each push, so the original name is not unique in S3
+                    // and would be guessable: store under a random-prefixed name.
+                    [$fileName, $key] = $this->randomizeStoredName($field, $uploadDir, $fileName, $uploadedFiles);
+                    $uploadedFile     = end($uploadedFiles);
                     $this->mediaStorage->putFile($key, $uploadedFile);
                     $uploadedKeys[] = $key;
                     $this->fileUploader->delete($uploadedFile);
                 }
+
+                $result[$alias] = $fileName;
             }
             $submission->setResults($result);
         } catch (FileUploadException|MediaStorageException|\InvalidArgumentException) {
@@ -65,6 +69,40 @@ class FormUploader
             }
             throw new FileUploadException($alias);
         }
+    }
+
+    /**
+     * Renames the local upload to a random-prefixed name that has no S3 object yet.
+     *
+     * @param string[] $uploadedFiles tracked local paths; the last entry is replaced with the renamed path
+     *
+     * @return array{string, string} new file name and S3 key
+     *
+     * @throws MediaStorageException
+     */
+    private function randomizeStoredName(Field $field, string $uploadDir, string $fileName, array &$uploadedFiles): array
+    {
+        $key = '';
+        $new = '';
+        for ($attempt = 0; $attempt < 2; ++$attempt) {
+            $new = bin2hex(random_bytes(8)).'-'.$fileName;
+            $key = $this->getFileKey($field, $new);
+            if (!$this->mediaStorage->exists($key)) {
+                break;
+            }
+            if (1 === $attempt) {
+                throw new MediaStorageException(sprintf('Could not find a free key for "%s"', $key));
+            }
+        }
+
+        $from = $uploadDir.DIRECTORY_SEPARATOR.$fileName;
+        $to   = $uploadDir.DIRECTORY_SEPARATOR.$new;
+        if (!@rename($from, $to)) {
+            throw new MediaStorageException(sprintf('Could not rename "%s"', $from));
+        }
+        $uploadedFiles[count($uploadedFiles) - 1] = $to;
+
+        return [$new, $key];
     }
 
     /**
