@@ -11,6 +11,7 @@ use Mautic\FormBundle\Crate\UploadFileCrate;
 use Mautic\FormBundle\Entity\Field;
 use Mautic\FormBundle\Entity\Form;
 use Mautic\FormBundle\Entity\Submission;
+use Psr\Log\LoggerInterface;
 
 class FormUploader
 {
@@ -18,6 +19,7 @@ class FormUploader
         private readonly FileUploader $fileUploader,
         private readonly CoreParametersHelper $coreParametersHelper,
         private readonly MediaStorage $mediaStorage,
+        private readonly LoggerInterface $logger,
     ) {
     }
 
@@ -142,7 +144,7 @@ class FormUploader
         $this->fileUploader->delete($uploadDir);
 
         if ($this->mediaStorage->isEnabled()) {
-            $this->mediaStorage->deletePrefix(MediaStorage::FORMS_PREFIX.$field->getForm()->getId().'/'.$field->getId().'/');
+            $this->deleteS3Prefix(MediaStorage::FORMS_PREFIX.$field->getForm()->getId().'/'.$field->getId().'/');
         }
     }
 
@@ -153,7 +155,7 @@ class FormUploader
         $this->fileUploader->delete($formUploadDir);
 
         if ($this->mediaStorage->isEnabled()) {
-            $this->mediaStorage->deletePrefix(MediaStorage::FORMS_PREFIX.$formId.'/');
+            $this->deleteS3Prefix(MediaStorage::FORMS_PREFIX.$formId.'/');
         }
     }
 
@@ -186,7 +188,22 @@ class FormUploader
         $this->fileUploader->delete($filePath);
 
         if ($this->mediaStorage->isEnabled()) {
-            $this->mediaStorage->delete($this->getFileKey($field, $fileName));
+            $key = $this->getFileKey($field, $fileName);
+            try {
+                $this->mediaStorage->delete($key);
+            } catch (MediaStorageException $e) {
+                // Orphaned S3 objects are the lesser harm; never break the DB cleanup that called us.
+                $this->logger->error(sprintf('Could not delete form upload "%s" from S3: %s', $key, $e->getMessage()));
+            }
+        }
+    }
+
+    private function deleteS3Prefix(string $prefix): void
+    {
+        try {
+            $this->mediaStorage->deletePrefix($prefix);
+        } catch (MediaStorageException $e) {
+            $this->logger->error(sprintf('Could not delete form uploads under "%s" from S3: %s', $prefix, $e->getMessage()));
         }
     }
 

@@ -29,7 +29,7 @@ final class FormUploaderTest extends \PHPUnit\Framework\TestCase
     {
         $fileUploaderMock         = $this->createMock(FileUploader::class);
         $coreParametersHelperMock = $this->createMock(CoreParametersHelper::class);
-        $formUploader             = new FormUploader($fileUploaderMock, $coreParametersHelperMock, $this->createDisabledStorage());
+        $formUploader             = new FormUploader($fileUploaderMock, $coreParametersHelperMock, $this->createDisabledStorage(), $this->createStub(\Psr\Log\LoggerInterface::class));
         $file1Mock                = $this->createStub(UploadedFile::class);
         $file2Mock                = $this->createStub(UploadedFile::class);
         $form1Mock                = $this->createMock(Form::class);
@@ -127,7 +127,7 @@ final class FormUploaderTest extends \PHPUnit\Framework\TestCase
     {
         $fileUploaderMock         = $this->createMock(FileUploader::class);
         $coreParametersHelperMock = $this->createMock(CoreParametersHelper::class);
-        $formUploader             = new FormUploader($fileUploaderMock, $coreParametersHelperMock, $this->createDisabledStorage());
+        $formUploader             = new FormUploader($fileUploaderMock, $coreParametersHelperMock, $this->createDisabledStorage(), $this->createStub(\Psr\Log\LoggerInterface::class));
         $file1Mock                = $this->createStub(UploadedFile::class);
         $file2Mock                = $this->createStub(UploadedFile::class);
         $form1Mock                = $this->createMock(Form::class);
@@ -229,7 +229,7 @@ final class FormUploaderTest extends \PHPUnit\Framework\TestCase
 
         $coreParametersHelperMock = $this->createStub(CoreParametersHelper::class);
 
-        $formUploader = new FormUploader($fileUploaderMock, $coreParametersHelperMock, $this->createDisabledStorage());
+        $formUploader = new FormUploader($fileUploaderMock, $coreParametersHelperMock, $this->createDisabledStorage(), $this->createStub(\Psr\Log\LoggerInterface::class));
 
         $filesToUpload = new UploadFileCrate();
         $submission    = new Submission();
@@ -267,7 +267,7 @@ final class FormUploaderTest extends \PHPUnit\Framework\TestCase
             ->with()
             ->willReturn($formMock);
 
-        $formUploader = new FormUploader($fileUploaderMock, $coreParametersHelperMock, $this->createDisabledStorage());
+        $formUploader = new FormUploader($fileUploaderMock, $coreParametersHelperMock, $this->createDisabledStorage(), $this->createStub(\Psr\Log\LoggerInterface::class));
 
         $actual = $formUploader->getCompleteFilePath($fieldMock, 'fileName');
 
@@ -289,7 +289,7 @@ final class FormUploaderTest extends \PHPUnit\Framework\TestCase
             ->with('form_upload_dir')
             ->willReturn($this->uploadDir);
 
-        $formUploader = new FormUploader($fileUploaderMock, $coreParametersHelperMock, $this->createDisabledStorage());
+        $formUploader = new FormUploader($fileUploaderMock, $coreParametersHelperMock, $this->createDisabledStorage(), $this->createStub(\Psr\Log\LoggerInterface::class));
 
         $formMock = $this->createMock(Form::class);
 
@@ -337,7 +337,7 @@ final class FormUploaderTest extends \PHPUnit\Framework\TestCase
             ->method('getId')
             ->willReturnOnConsecutiveCalls($this->formId1, null);
 
-        $formUploader = new FormUploader($fileUploaderMock, $coreParametersHelperMock, $this->createDisabledStorage());
+        $formUploader = new FormUploader($fileUploaderMock, $coreParametersHelperMock, $this->createDisabledStorage(), $this->createStub(\Psr\Log\LoggerInterface::class));
         $formUploader->deleteFilesOfForm($formMock);
 
         $formMock->deletedId = $this->formId1;
@@ -357,13 +357,13 @@ final class FormUploaderTest extends \PHPUnit\Framework\TestCase
         return $storage;
     }
 
-    private function createEnabledUploader(MediaStorage $storage, ?FileUploader $fileUploader = null): FormUploader
+    private function createEnabledUploader(MediaStorage $storage, ?FileUploader $fileUploader = null, ?\Psr\Log\LoggerInterface $logger = null): FormUploader
     {
         $params = $this->createStub(CoreParametersHelper::class);
         $params->method('get')->willReturn($this->uploadDir);
         $storage->method('isEnabled')->willReturn(true);
 
-        return new FormUploader($fileUploader ?? $this->createStub(FileUploader::class), $params, $storage);
+        return new FormUploader($fileUploader ?? $this->createStub(FileUploader::class), $params, $storage, $logger ?? $this->createStub(\Psr\Log\LoggerInterface::class));
     }
 
     private function createField(int $formId, int $fieldId, string $alias = 'f'): Field
@@ -624,7 +624,7 @@ final class FormUploaderTest extends \PHPUnit\Framework\TestCase
 
     public function testDisabledKeepsLocalBehavior(): void
     {
-        $uploader = new FormUploader($this->createStub(FileUploader::class), $this->createStub(CoreParametersHelper::class), $this->createDisabledStorage());
+        $uploader = new FormUploader($this->createStub(FileUploader::class), $this->createStub(CoreParametersHelper::class), $this->createDisabledStorage(), $this->createStub(\Psr\Log\LoggerInterface::class));
         $field    = $this->createField(1, 10);
 
         $this->assertNull($uploader->getFileUrl($field, 'a.txt'));
@@ -632,5 +632,43 @@ final class FormUploaderTest extends \PHPUnit\Framework\TestCase
         // No local file and storage disabled: returns the (missing) local path, never downloads.
         $this->assertStringEndsWith('/1/10/a.txt', $uploader->getLocalCopy($field, 'a.txt'));
         $uploader->deleteAllFilesOfFormField($field);
+    }
+
+    public function testDeleteAllFilesOfFormFieldLogsS3FailureWithoutThrowing(): void
+    {
+        $storage = $this->createMock(MediaStorage::class);
+        $storage->method('deletePrefix')->willThrowException(new MediaStorageException('boom'));
+        $logger = $this->createMock(\Psr\Log\LoggerInterface::class);
+        $logger->expects($this->once())->method('error')->with($this->stringContains('media/files/form/3/7/'));
+
+        $this->createEnabledUploader($storage, null, $logger)->deleteAllFilesOfFormField($this->createField(3, 7));
+    }
+
+    public function testDeleteFilesOfFormLogsS3FailureWithoutThrowing(): void
+    {
+        $storage = $this->createMock(MediaStorage::class);
+        $storage->method('deletePrefix')->willThrowException(new MediaStorageException('boom'));
+        $logger = $this->createMock(\Psr\Log\LoggerInterface::class);
+        $logger->expects($this->once())->method('error')->with($this->stringContains('media/files/form/3/'));
+
+        $form = $this->createStub(Form::class);
+        $form->method('getId')->willReturn(3);
+        $this->createEnabledUploader($storage, null, $logger)->deleteFilesOfForm($form);
+    }
+
+    public function testDeleteUploadedFilesLogsS3FailureWithoutThrowing(): void
+    {
+        $storage = $this->createMock(MediaStorage::class);
+        $storage->method('delete')->willThrowException(new MediaStorageException('boom'));
+        $logger = $this->createMock(\Psr\Log\LoggerInterface::class);
+        $logger->expects($this->once())->method('error')->with($this->stringContains('media/files/form/3/7/a.txt'));
+
+        $form = $this->createStub(Form::class);
+        $form->method('getFields')->willReturn(new \Doctrine\Common\Collections\ArrayCollection([$this->createField(3, 7, 'one')]));
+        $submission = $this->createStub(Submission::class);
+        $submission->method('getForm')->willReturn($form);
+        $submission->method('getResults')->willReturn(['one' => 'a.txt']);
+
+        $this->createEnabledUploader($storage, null, $logger)->deleteUploadedFiles($submission);
     }
 }
