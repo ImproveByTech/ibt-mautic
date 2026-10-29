@@ -54,4 +54,20 @@ final class AssetTest extends TestCase
 
         $asset->getSlug();
     }
+
+    public function testRemoteGetFileContentsReadsUrl(): void
+    {
+        $tmp = tempnam(sys_get_temp_dir(), 'asset');
+        file_put_contents($tmp, 'remote-bytes');
+
+        $asset = new Asset();
+        $asset->setStorageLocation('remote');
+        $asset->setRemotePath('file://'.$tmp);
+
+        try {
+            $this->assertSame('remote-bytes', $asset->getFileContents());
+        } finally {
+            unlink($tmp);
+        }
+    }
 }

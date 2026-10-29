@@ -4,10 +4,12 @@ namespace Mautic\AssetBundle\Controller;
 
 use Mautic\AssetBundle\Model\AssetModel;
 use Mautic\CoreBundle\Controller\FormController;
+use Mautic\CoreBundle\Exception\MediaStorageException;
 use Mautic\CoreBundle\Form\Type\DateRangeType;
 use Mautic\CoreBundle\Helper\CoreParametersHelper;
 use Mautic\CoreBundle\Helper\FileHelper;
 use Mautic\CoreBundle\Model\AuditLogModel;
+use Mautic\CoreBundle\Service\FlashBag;
 use Mautic\PluginBundle\Helper\IntegrationHelper;
 use Oneup\UploaderBundle\Templating\Helper\UploaderHelper;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -321,8 +323,15 @@ class AssetController extends FormController
                     $entity->upload();
                     $entity->setDateModified(new \DateTime());
                     // form is valid so process the data
-                    $model->saveEntity($entity);
+                    try {
+                        $model->saveEntity($entity);
+                    } catch (MediaStorageException $e) {
+                        $valid = false;
+                        $this->addFlashMessage('mautic.asset.asset.error.storage', ['%error%' => $e->getMessage()], FlashBag::LEVEL_ERROR);
+                    }
+                }
 
+                if ($valid) {
                     // remove the asset from request
                     $request->files->remove('asset');
 
@@ -483,8 +492,15 @@ class AssetController extends FormController
                     $entity->upload();
 
                     // form is valid so process the data
-                    $model->saveEntity($entity, $this->getFormButton($form, ['buttons', 'save'])->isClicked());
+                    try {
+                        $model->saveEntity($entity, $this->getFormButton($form, ['buttons', 'save'])->isClicked());
+                    } catch (MediaStorageException $e) {
+                        $valid = false;
+                        $this->addFlashMessage('mautic.asset.asset.error.storage', ['%error%' => $e->getMessage()], FlashBag::LEVEL_ERROR);
+                    }
+                }
 
+                if ($valid) {
                     // remove the asset from request
                     $request->files->remove('asset');
 
