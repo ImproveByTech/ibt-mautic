@@ -4,6 +4,7 @@ namespace Mautic\DashboardBundle\Controller;
 
 use Mautic\CoreBundle\Controller\AbstractFormController;
 use Mautic\CoreBundle\Form\Type\DateRangeType;
+use Mautic\CoreBundle\Exception\MediaStorageException;
 use Mautic\CoreBundle\Helper\DateTimeHelper;
 use Mautic\CoreBundle\Helper\InputHelper;
 use Mautic\CoreBundle\Helper\PathsHelper;
@@ -12,6 +13,7 @@ use Mautic\CoreBundle\Release\ThisRelease;
 use Mautic\DashboardBundle\Dashboard\Widget as WidgetService;
 use Mautic\DashboardBundle\Entity\Widget;
 use Mautic\DashboardBundle\Form\Type\UploadType;
+use Mautic\DashboardBundle\Helper\DashboardFileSync;
 use Mautic\DashboardBundle\Model\DashboardModel;
 use Symfony\Component\Filesystem\Exception\IOException;
 use Symfony\Component\Form\FormError;
@@ -358,7 +360,7 @@ class DashboardController extends AbstractFormController
     /**
      * Exports the widgets of current user into a json file.
      */
-    public function deleteDashboardFileAction(Request $request, PathsHelper $pathsHelper): RedirectResponse
+    public function deleteDashboardFileAction(Request $request, PathsHelper $pathsHelper, DashboardFileSync $fileSync): RedirectResponse
     {
         $file = $request->get('file');
 
@@ -371,6 +373,9 @@ class DashboardController extends AbstractFormController
 
         if (file_exists($path) && is_writable($path)) {
             unlink($path);
+            if ('user' === $type) {
+                $fileSync->remove($path);
+            }
         }
 
         return $this->redirectToRoute('mautic_dashboard_action', ['objectAction' => 'import']);
@@ -381,7 +386,7 @@ class DashboardController extends AbstractFormController
      *
      * @param string|null $file
      */
-    public function applyDashboardFileAction(Request $request, PathsHelper $pathsHelper, RouterInterface $urlGenerator, $file = null): RedirectResponse
+    public function applyDashboardFileAction(Request $request, PathsHelper $pathsHelper, RouterInterface $urlGenerator, $file = null, ?DashboardFileSync $fileSync = null): RedirectResponse
     {
         if (!$file) {
             $file = $request->get('file');
@@ -393,6 +398,10 @@ class DashboardController extends AbstractFormController
 
         $dir  = $pathsHelper->getSystemPath("dashboard.{$type}");
         $path = $dir.'/'.$name.'.json';
+
+        if ('user' === $type && !file_exists($path)) {
+            $fileSync?->pull();
+        }
 
         if (!file_exists($path) || !is_readable($path)) {
             $this->addFlashMessage('mautic.dashboard.upload.filenotfound', [], 'error', 'validators');
@@ -429,7 +438,7 @@ class DashboardController extends AbstractFormController
         return $this->redirect($urlGenerator->generate('mautic_dashboard_index'));
     }
 
-    public function importAction(Request $request, FormFactoryInterface $formFactory, PathsHelper $pathsHelper): Response
+    public function importAction(Request $request, FormFactoryInterface $formFactory, PathsHelper $pathsHelper, DashboardFileSync $fileSync): Response
     {
         $preview = $request->get('preview');
 
@@ -452,6 +461,11 @@ class DashboardController extends AbstractFormController
                         $extension = pathinfo($fileData->getClientOriginalName(), PATHINFO_EXTENSION);
                         if ('json' === $extension) {
                             $fileData->move($directories['user'], $fileData->getClientOriginalName());
+                            try {
+                                $fileSync->push($directories['user'].'/'.$fileData->getClientOriginalName());
+                            } catch (MediaStorageException $e) {
+                                $form->addError(new FormError($e->getMessage()));
+                            }
                         } else {
                             $form->addError(
                                 new FormError(
@@ -469,6 +483,8 @@ class DashboardController extends AbstractFormController
                 }
             }
         }
+
+        $fileSync->pull();
 
         $dashboardFiles = ['user' => [], 'gobal' => []];
         $dashboards     = [];
