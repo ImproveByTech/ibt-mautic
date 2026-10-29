@@ -119,6 +119,11 @@ class MediaStorageTest extends TestCase
         $this->assertSame('media/images/foto ção.png', $storage->keyFromPublicUrl($url));
     }
 
+    public function testRootUrlIsBucketAndRootWithTrailingSlash(): void
+    {
+        $this->assertSame('https://mautic-selfhosted.s3.sa-east-1.amazonaws.com/gpsdapena/', $this->storage()->getRootUrl());
+    }
+
     public function testKeyFromPublicUrlRejectsForeignUrls(): void
     {
         $storage = $this->storage();

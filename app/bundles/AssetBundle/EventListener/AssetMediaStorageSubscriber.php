@@ -73,7 +73,7 @@ class AssetMediaStorageSubscriber implements EventSubscriberInterface
             @unlink($localFile);
         }
 
-        if (null !== $old && $old !== $url) {
+        if (null !== $old && $this->mediaStorage->keyFromPublicUrl($old) !== $this->mediaStorage->keyFromPublicUrl($url)) {
             $this->deleteOwnObject($old, $asset->getId());
         }
     }
@@ -99,7 +99,7 @@ class AssetMediaStorageSubscriber implements EventSubscriberInterface
     private function canonicalizeRemotePath(Asset $asset): void
     {
         $remotePath = $asset->getRemotePath();
-        if (!$asset->isRemote() || null === $remotePath) {
+        if (null === $remotePath) {
             return;
         }
 
@@ -119,7 +119,7 @@ class AssetMediaStorageSubscriber implements EventSubscriberInterface
      */
     private function isSharedWithOtherAsset(string $key, ?int $excludeId): bool
     {
-        $prefix = $this->mediaStorage->getPublicUrl(MediaStorage::FILES_PREFIX);
+        $prefix = $this->mediaStorage->getRootUrl();
         foreach ($this->assetRepository->getOtherRemotePathsWithPrefix($prefix, $excludeId) as $otherUrl) {
             if ($this->mediaStorage->keyFromPublicUrl($otherUrl) === $key) {
                 return true;

@@ -43,6 +43,7 @@ final class AssetMediaStorageSubscriberTest extends TestCase
         mkdir($this->dir);
         $this->storage = $this->createMock(MediaStorage::class);
         $this->storage->method('isEnabled')->willReturn(true);
+        $this->storage->method('getPublicUrl')->willReturnCallback(fn (string $k): string => 'https://cdn.example.com/root/'.$k);
         $params = $this->createMock(CoreParametersHelper::class);
         $params->method('get')->with('upload_dir')->willReturn($this->dir);
         $this->repo       = $this->createMock(AssetRepository::class);
@@ -139,7 +140,7 @@ final class AssetMediaStorageSubscriberTest extends TestCase
 
             return 'https://cdn.example.com/root/'.$key;
         });
-        $this->storage->method('keyFromPublicUrl')->willReturn('media/files/old.pdf');
+        $this->storage->method('keyFromPublicUrl')->willReturnCallback(fn (string $u): ?string => str_contains($u, 'old.pdf') ? 'media/files/old.pdf' : 'media/files/new.pdf');
         $this->storage->method('delete')->willReturnCallback(function (string $key) use (&$calls): void {
             $calls[] = 'delete:'.$key;
         });
@@ -197,7 +198,7 @@ final class AssetMediaStorageSubscriberTest extends TestCase
     {
         $url = 'https://cdn.example.com/root/media/files/a.pdf';
         $this->storage->method('keyFromPublicUrl')->willReturn('media/files/a.pdf');
-        $this->storage->method('getPublicUrl')->willReturnCallback(fn (string $k): string => 'https://cdn.example.com/root/'.$k);
+        $this->storage->method('getRootUrl')->willReturn('https://cdn.example.com/root/');
         $this->repo->expects($this->once())->method('getOtherRemotePathsWithPrefix')->willReturn([$url]);
         $this->storage->expects($this->never())->method('delete');
         $asset = new Asset();
@@ -224,7 +225,7 @@ final class AssetMediaStorageSubscriberTest extends TestCase
         $asset->setRemotePath('https://cdn.example.com/root/media/files/old.pdf');
         $this->storage->method('putFile')->willReturn('https://cdn.example.com/root/media/files/new.pdf');
         $this->storage->method('keyFromPublicUrl')->willReturn('media/files/old.pdf');
-        $this->storage->method('getPublicUrl')->willReturnCallback(fn (string $k): string => 'https://cdn.example.com/root/'.$k);
+        $this->storage->method('getRootUrl')->willReturn('https://cdn.example.com/root/');
         $this->repo->method('getOtherRemotePathsWithPrefix')->willReturn(['https://cdn.example.com/root/media/files/old.pdf']);
         $this->storage->expects($this->never())->method('delete');
 
@@ -248,7 +249,7 @@ final class AssetMediaStorageSubscriberTest extends TestCase
         $asset = $this->localAsset('new.pdf');
         $asset->setRemotePath('https://cdn.example.com/root/media/files/old.pdf');
         $this->storage->method('putFile')->willReturn('https://cdn.example.com/root/media/files/new.pdf');
-        $this->storage->method('keyFromPublicUrl')->willReturn('media/files/old.pdf');
+        $this->storage->method('keyFromPublicUrl')->willReturnCallback(fn (string $u): ?string => str_contains($u, 'old.pdf') ? 'media/files/old.pdf' : 'media/files/new.pdf');
         $this->storage->method('delete')->willThrowException(new MediaStorageException('nope'));
         $this->logger->expects($this->once())->method('error');
 
@@ -275,7 +276,7 @@ final class AssetMediaStorageSubscriberTest extends TestCase
         $asset = $this->localAsset('new.pdf');
         $asset->setStorageLocation('remote');
         $asset->setRemotePath('https://cdn.example.com/root/media/files/old.pdf');
-        $this->storage->method('keyFromPublicUrl')->willReturn('media/files/old.pdf');
+        $this->storage->method('keyFromPublicUrl')->willReturnCallback(fn (string $u): ?string => str_contains($u, 'old.pdf') ? 'media/files/old.pdf' : 'media/files/new.pdf');
         $this->storage->expects($this->once())->method('putFile')
             ->with('media/files/new.pdf')->willReturn('https://cdn.example.com/root/media/files/new.pdf');
         $this->storage->expects($this->once())->method('delete')->with('media/files/old.pdf');
@@ -299,10 +300,15 @@ final class AssetMediaStorageSubscriberTest extends TestCase
         $this->assertFileExists($this->dir.'/stale.pdf');
     }
 
+    public function testDeleteSkippedWhenAnotherAssetSharesTheObjectViaEncodedSegmentVariant(): void
+    {
+        $this->testDeleteSkippedWhenAnotherAssetSharesTheObjectViaUrlVariant();
+    }
+
     public function testDeleteSkippedWhenAnotherAssetSharesTheObjectViaUrlVariant(): void
     {
         $base = 'https://cdn.example.com/root/';
-        $this->storage->method('getPublicUrl')->willReturnCallback(fn (string $k): string => $base.$k);
+        $this->storage->method('getRootUrl')->willReturn($base);
         // Mirrors the real normalization: strip query/fragment, decode percent-encoding.
         $this->storage->method('keyFromPublicUrl')->willReturnCallback(function (string $u) use ($base): ?string {
             if (!str_starts_with($u, $base)) {
@@ -314,9 +320,9 @@ final class AssetMediaStorageSubscriberTest extends TestCase
         });
         $this->storage->expects($this->never())->method('delete');
 
-        foreach (['abc.pdf?x=1', 'ab%63.pdf'] as $variant) {
+        foreach (['media/files/abc.pdf?x=1', 'media/files/ab%63.pdf', '%6Dedia/files/abc.pdf'] as $variant) {
             $this->repo = $this->createMock(AssetRepository::class);
-            $this->repo->method('getOtherRemotePathsWithPrefix')->willReturn([$base.'media/files/'.$variant]);
+            $this->repo->method('getOtherRemotePathsWithPrefix')->willReturn([$base.$variant]);
             $params = $this->createMock(CoreParametersHelper::class);
             $sub    = new AssetMediaStorageSubscriber($this->storage, $params, $this->repo, $this->logger);
             $asset  = new Asset();
@@ -330,7 +336,6 @@ final class AssetMediaStorageSubscriberTest extends TestCase
     public function testRemotePathPointingAtOurBucketIsCanonicalized(): void
     {
         $this->storage->method('keyFromPublicUrl')->willReturn('media/files/abc.pdf');
-        $this->storage->method('getPublicUrl')->with('media/files/abc.pdf')->willReturn('https://cdn.example.com/root/media/files/abc.pdf');
         $asset = new Asset();
         $asset->setStorageLocation('remote');
         $asset->setRemotePath('https://cdn.example.com/root/media/files/abc.pdf?x=1');
@@ -349,5 +354,28 @@ final class AssetMediaStorageSubscriberTest extends TestCase
         $this->assertFalse(AssetMediaStorageSubscriber::shouldRemoveOrphanedUpload(true, 'same.pdf', 'same.pdf', false));
         // Shared with another local asset: keep.
         $this->assertFalse(AssetMediaStorageSubscriber::shouldRemoveOrphanedUpload(true, null, 'new.pdf', true));
+    }
+
+    public function testReplacingWithSameKeyDifferentSpellingDoesNotDelete(): void
+    {
+        $asset = $this->localAsset('same.pdf');
+        $asset->setRemotePath('https://cdn.example.com/root/media/files/same.pdf?v=1');
+        $this->storage->method('putFile')->willReturn('https://cdn.example.com/root/media/files/same.pdf');
+        $this->storage->method('keyFromPublicUrl')->willReturn('media/files/same.pdf');
+        $this->storage->expects($this->never())->method('delete');
+
+        $this->subscriber->onAssetPreSave(new AssetEvent($asset, false));
+    }
+
+    public function testOursRemotePathIsCanonicalizedEvenWhenLocal(): void
+    {
+        $asset = new Asset();
+        $asset->setStorageLocation('local');
+        $asset->setRemotePath('https://cdn.example.com/root/media/files/a.pdf?x=1');
+        $this->storage->method('keyFromPublicUrl')->willReturn('media/files/a.pdf');
+
+        $this->subscriber->onAssetPreSave(new AssetEvent($asset, false));
+
+        $this->assertSame('https://cdn.example.com/root/media/files/a.pdf', $asset->getRemotePath());
     }
 }

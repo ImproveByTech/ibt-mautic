@@ -207,6 +207,16 @@ class MediaStorage
     }
 
     /**
+     * The encoded bucket + root base URL with a trailing slash; every public URL of ours starts with it.
+     */
+    public function getRootUrl(): string
+    {
+        $this->assertEnabled();
+
+        return $this->baseUrl().$this->encodePath($this->root()).'/';
+    }
+
+    /**
      * Returns the root-relative key, or null when the URL is not under our bucket/root.
      */
     public function keyFromPublicUrl(string $url): ?string
@@ -215,7 +225,7 @@ class MediaStorage
             return null;
         }
 
-        $base = $this->baseUrl().$this->encodePath($this->root()).'/';
+        $base = $this->getRootUrl();
         if (!str_starts_with($url, $base)) {
             return null;
         }
