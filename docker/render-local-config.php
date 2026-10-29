@@ -91,6 +91,16 @@ $parameters += [
     'allowed_extensions' => envList('MAUTIC_ASSET_ALLOWED_EXTENSIONS', []) ?: null,
 ];
 
+// S3 media storage. '' (not null) when unset, so removing an env var really
+// disables the feature instead of keeping a stale value from local.php.
+$parameters += [
+    's3_bucket'            => getenv('S3_BUCKET') ?: '',
+    's3_region'            => getenv('S3_REGION') ?: '',
+    's3_access_key_id'     => getenv('S3_ACCESS_KEY_ID') ?: '',
+    's3_secret_access_key' => getenv('S3_SECRET_ACCESS_KEY') ?: '',
+    's3_root_directory'    => getenv('S3_ROOT_DIRECTORY') ?: '',
+];
+
 $parameters = array_filter($parameters, static fn ($value) => null !== $value);
 
 $target   = __DIR__.'/../config/local.php';
