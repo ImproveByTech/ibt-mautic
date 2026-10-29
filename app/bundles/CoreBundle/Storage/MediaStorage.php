@@ -48,11 +48,17 @@ class MediaStorage
     public function putFile(string $key, string $localPath): string
     {
         $this->assertEnabled();
-        $mime = MimeTypes::getDefault()->guessMimeType($localPath) ?: 'application/octet-stream';
-
-        $handle = @fopen($localPath, 'rb');
+        $handle = is_file($localPath) && is_readable($localPath) ? @fopen($localPath, 'rb') : false;
         if (false === $handle) {
             throw new MediaStorageException(sprintf('Cannot read local file "%s"', $localPath));
+        }
+
+        try {
+            $mime = MimeTypes::getDefault()->guessMimeType($localPath) ?: 'application/octet-stream';
+        } catch (\Throwable $e) {
+            fclose($handle);
+
+            throw new MediaStorageException($e->getMessage(), 0, $e);
         }
 
         try {
@@ -95,20 +101,33 @@ class MediaStorage
     public function downloadTo(string $key, string $localPath): void
     {
         $this->assertEnabled();
-        $this->execute('GetObject', ['Key' => $this->fullKey($key), 'SaveAs' => $localPath]);
+        try {
+            $this->execute('GetObject', ['Key' => $this->fullKey($key), 'SaveAs' => $localPath]);
+        } catch (MediaStorageException $e) {
+            if (is_file($localPath)) {
+                @unlink($localPath);
+            }
+
+            throw $e;
+        }
     }
 
     public function delete(string $key): void
     {
         $this->assertEnabled();
+        $this->assertDeletable($key);
         $this->execute('DeleteObject', ['Key' => $this->fullKey($key)]);
     }
 
     public function deletePrefix(string $prefix): void
     {
         $this->assertEnabled();
-        if ('' === trim($prefix, '/')) {
-            throw new MediaStorageException('Refusing to delete an empty prefix');
+        $this->assertDeletable($prefix);
+        if (!str_ends_with($prefix, '/')) {
+            throw new MediaStorageException(sprintf('Refusing to delete prefix "%s": it must end with "/"', $prefix));
+        }
+        if ('media/' === $prefix) {
+            throw new MediaStorageException('Refusing to delete the whole media/ prefix');
         }
 
         $batch = [];
@@ -136,6 +155,8 @@ class MediaStorage
                 return false;
             }
 
+            throw new MediaStorageException($e->getMessage(), 0, $e);
+        } catch (\RuntimeException $e) {
             throw new MediaStorageException($e->getMessage(), 0, $e);
         }
     }
@@ -205,11 +226,21 @@ class MediaStorage
         }
 
         $key = implode('/', array_map('rawurldecode', explode('/', $path)));
-        if (in_array('..', explode('/', $key), true)) {
+        if (!str_starts_with($key, 'media/') || in_array('..', explode('/', $key), true)) {
             return null;
         }
 
         return $key;
+    }
+
+    /**
+     * Only objects under <root>/media/ may ever be deleted.
+     */
+    private function assertDeletable(string $key): void
+    {
+        if (!str_starts_with($key, 'media/') || in_array('..', explode('/', $key), true)) {
+            throw new MediaStorageException(sprintf('Refusing to delete "%s": only keys under media/ may be deleted', $key));
+        }
     }
 
     private function assertEnabled(): void
@@ -268,7 +299,9 @@ class MediaStorage
     {
         try {
             return $this->client()->execute($this->client()->getCommand($operation, ['Bucket' => $this->bucket()] + $args));
-        } catch (AwsException $e) {
+        } catch (MediaStorageException $e) {
+            throw $e;
+        } catch (AwsException|\RuntimeException $e) {
             throw new MediaStorageException($e->getMessage(), 0, $e);
         }
     }

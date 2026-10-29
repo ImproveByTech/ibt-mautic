@@ -186,4 +186,193 @@ class MediaStorageTest extends TestCase
         $this->expectException(MediaStorageException::class);
         $this->storage()->deletePrefix('');
     }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function badDeleteKeyProvider(): iterable
+    {
+        yield 'database' => ['database/x'];
+        yield 'root level' => ['x.png'];
+        yield 'dotdot' => ['media/../database/x'];
+        yield 'not media' => ['mediafoo/x'];
+        yield 'empty' => [''];
+    }
+
+    #[DataProvider('badDeleteKeyProvider')]
+    public function testDeleteRefusesKeysOutsideMedia(string $key): void
+    {
+        $this->expectException(MediaStorageException::class);
+        $this->storage()->delete($key);
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function badPrefixProvider(): iterable
+    {
+        yield 'database' => ['database/'];
+        yield 'no trailing slash' => ['media/files/form/7'];
+        yield 'media itself' => ['media/'];
+        yield 'dotdot' => ['media/../database/'];
+        yield 'empty' => [''];
+    }
+
+    #[DataProvider('badPrefixProvider')]
+    public function testDeletePrefixRefusesUnsafePrefixes(string $prefix): void
+    {
+        $this->expectException(MediaStorageException::class);
+        $this->storage()->deletePrefix($prefix);
+    }
+
+    public function testRefusedDeletesNeverCallS3(): void
+    {
+        try {
+            $this->storage()->delete('database/x');
+        } catch (MediaStorageException) {
+        }
+        $this->assertSame([], $this->commands);
+    }
+
+    public function testKeyFromPublicUrlOnlyReturnsMediaKeys(): void
+    {
+        $base = 'https://mautic-selfhosted.s3.sa-east-1.amazonaws.com/gpsdapena/';
+        $s    = $this->storage();
+
+        $this->assertNull($s->keyFromPublicUrl($base.'database/x.sql'));
+        $this->assertNull($s->keyFromPublicUrl($base.'media/../database/x'));
+        $this->assertNull($s->keyFromPublicUrl($base.'media/%2E%2E/database/x'));
+        $this->assertSame('media/files/a.pdf', $s->keyFromPublicUrl($base.'media/files/a.pdf?x=1'));
+    }
+
+    public function testExists(): void
+    {
+        $this->mock->append(new Result([]));
+        $this->assertTrue($this->storage()->exists('media/files/a.pdf'));
+        $this->assertSame('HeadObject', $this->commands[0]->getName());
+        $this->assertSame('gpsdapena/media/files/a.pdf', $this->commands[0]['Key']);
+    }
+
+    public function testExistsReturnsFalseOn404(): void
+    {
+        $this->mock->append(fn (CommandInterface $cmd) => new S3Exception('nf', $cmd, ['code' => 'NotFound', 'response' => new \GuzzleHttp\Psr7\Response(404)]));
+        $this->assertFalse($this->storage()->exists('media/files/a.pdf'));
+    }
+
+    public function testExistsThrowsOnOtherErrors(): void
+    {
+        $this->mock->append(fn (CommandInterface $cmd) => new S3Exception('denied', $cmd, ['code' => 'AccessDenied', 'response' => new \GuzzleHttp\Psr7\Response(403)]));
+        $this->expectException(MediaStorageException::class);
+        $this->storage()->exists('media/files/a.pdf');
+    }
+
+    public function testGetContents(): void
+    {
+        $this->mock->append(new Result(['Body' => \GuzzleHttp\Psr7\Utils::streamFor('hello')]));
+        $this->assertSame('hello', $this->storage()->getContents('media/files/a.txt'));
+        $this->assertSame('GetObject', $this->commands[0]->getName());
+    }
+
+    public function testGetContentsAwsError(): void
+    {
+        $this->mock->append(fn (CommandInterface $cmd) => new S3Exception('boom', $cmd));
+        $this->expectException(MediaStorageException::class);
+        $this->storage()->getContents('media/files/a.txt');
+    }
+
+    public function testDownloadToPassesSaveAs(): void
+    {
+        $this->mock->append(new Result(['Body' => \GuzzleHttp\Psr7\Utils::streamFor('x')]));
+        $this->storage()->downloadTo('media/files/a.txt', '/tmp/ignored');
+        $this->assertSame('/tmp/ignored', $this->commands[0]['@http']['sink'] ?? $this->commands[0]['SaveAs']);
+        $this->assertSame('gpsdapena/media/files/a.txt', $this->commands[0]['Key']);
+    }
+
+    public function testDownloadToAwsErrorRemovesPartialFile(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'ms');
+        file_put_contents($path, 'partial');
+        $this->mock->append(fn (CommandInterface $cmd) => new S3Exception('boom', $cmd));
+
+        try {
+            $this->storage()->downloadTo('media/files/a.txt', $path);
+            $this->fail('Expected exception');
+        } catch (MediaStorageException) {
+            $this->assertFileDoesNotExist($path);
+        }
+    }
+
+    public function testDelete(): void
+    {
+        $this->mock->append(new Result([]));
+        $this->storage()->delete('media/files/a.txt');
+        $this->assertSame('DeleteObject', $this->commands[0]->getName());
+        $this->assertSame('gpsdapena/media/files/a.txt', $this->commands[0]['Key']);
+    }
+
+    public function testDeleteAwsError(): void
+    {
+        $this->mock->append(fn (CommandInterface $cmd) => new S3Exception('boom', $cmd));
+        $this->expectException(MediaStorageException::class);
+        $this->storage()->delete('media/files/a.txt');
+    }
+
+    public function testPutFileMissingLocalFile(): void
+    {
+        $this->expectException(MediaStorageException::class);
+        $this->storage()->putFile('media/files/a.txt', '/nonexistent/nope.txt');
+    }
+
+    public function testPutFileUnreadableLocalFile(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'ms');
+        chmod($path, 0000);
+        try {
+            if (is_readable($path)) {
+                $this->markTestSkipped('Running as a user that can read mode 000 files');
+            }
+            $this->expectException(MediaStorageException::class);
+            $this->storage()->putFile('media/files/a.txt', $path);
+        } finally {
+            chmod($path, 0600);
+            @unlink($path);
+        }
+    }
+
+    public function testNonAwsRuntimeErrorsAreWrapped(): void
+    {
+        $this->mock->append(static fn () => new \RuntimeException('no credentials'));
+        $this->expectException(MediaStorageException::class);
+        $this->storage()->putContents('media/files/a.txt', 'x');
+    }
+
+    public function testDeletePrefixBatchesAt1000Keys(): void
+    {
+        $date     = new \DateTimeImmutable();
+        $contents = [];
+        for ($i = 0; $i < 1001; ++$i) {
+            $contents[] = ['Key' => "gpsdapena/media/files/form/7/k{$i}.txt", 'Size' => 1, 'LastModified' => $date];
+        }
+        $this->mock->append(new Result(['IsTruncated' => false, 'Contents' => $contents]));
+        $this->mock->append(new Result([]));
+        $this->mock->append(new Result([]));
+
+        $this->storage()->deletePrefix('media/files/form/7/');
+
+        $deletes = array_values(array_filter($this->commands, static fn ($c) => 'DeleteObjects' === $c->getName()));
+        $this->assertCount(2, $deletes);
+        $this->assertCount(1000, $deletes[0]['Delete']['Objects']);
+        $this->assertCount(1, $deletes[1]['Delete']['Objects']);
+    }
+
+    public function testDeletePrefixThrowsWhenS3ReportsErrors(): void
+    {
+        $this->mock->append(new Result(['IsTruncated' => false, 'Contents' => [
+            ['Key' => 'gpsdapena/media/files/form/7/a.txt', 'Size' => 1, 'LastModified' => new \DateTimeImmutable()],
+        ]]));
+        $this->mock->append(new Result(['Errors' => [['Key' => 'gpsdapena/media/files/form/7/a.txt', 'Code' => 'AccessDenied']]]));
+
+        $this->expectException(MediaStorageException::class);
+        $this->storage()->deletePrefix('media/files/form/7/');
+    }
 }

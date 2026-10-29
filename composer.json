@@ -25,7 +25,8 @@
     "cweagans/composer-patches": "^1.7.3",
     "mautic/core-lib": "^7.0",
     "symfony/amazon-mailer": "^7.4",
-    "etailors/mautic-amazon-ses": "^1.0"
+    "etailors/mautic-amazon-ses": "^1.0",
+    "aws/aws-sdk-php": "^3.0"
   },
   "require-dev": {
     "codeception/codeception": "^5.1",
