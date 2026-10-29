@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Mautic\FormBundle\Tests\Model;
 
 use Mautic\CoreBundle\Exception\FileUploadException;
+use Mautic\CoreBundle\Exception\MediaStorageException;
 use Mautic\CoreBundle\Helper\CoreParametersHelper;
 use Mautic\CoreBundle\Helper\FileUploader;
+use Mautic\CoreBundle\Storage\MediaStorage;
 use Mautic\FormBundle\Crate\UploadFileCrate;
 use Mautic\FormBundle\Entity\Field;
 use Mautic\FormBundle\Entity\Form;
@@ -27,7 +29,7 @@ final class FormUploaderTest extends \PHPUnit\Framework\TestCase
     {
         $fileUploaderMock         = $this->createMock(FileUploader::class);
         $coreParametersHelperMock = $this->createMock(CoreParametersHelper::class);
-        $formUploader             = new FormUploader($fileUploaderMock, $coreParametersHelperMock);
+        $formUploader             = new FormUploader($fileUploaderMock, $coreParametersHelperMock, $this->createDisabledStorage());
         $file1Mock                = $this->createStub(UploadedFile::class);
         $file2Mock                = $this->createStub(UploadedFile::class);
         $form1Mock                = $this->createMock(Form::class);
@@ -125,7 +127,7 @@ final class FormUploaderTest extends \PHPUnit\Framework\TestCase
     {
         $fileUploaderMock         = $this->createMock(FileUploader::class);
         $coreParametersHelperMock = $this->createMock(CoreParametersHelper::class);
-        $formUploader             = new FormUploader($fileUploaderMock, $coreParametersHelperMock);
+        $formUploader             = new FormUploader($fileUploaderMock, $coreParametersHelperMock, $this->createDisabledStorage());
         $file1Mock                = $this->createStub(UploadedFile::class);
         $file2Mock                = $this->createStub(UploadedFile::class);
         $form1Mock                = $this->createMock(Form::class);
@@ -227,7 +229,7 @@ final class FormUploaderTest extends \PHPUnit\Framework\TestCase
 
         $coreParametersHelperMock = $this->createStub(CoreParametersHelper::class);
 
-        $formUploader = new FormUploader($fileUploaderMock, $coreParametersHelperMock);
+        $formUploader = new FormUploader($fileUploaderMock, $coreParametersHelperMock, $this->createDisabledStorage());
 
         $filesToUpload = new UploadFileCrate();
         $submission    = new Submission();
@@ -265,7 +267,7 @@ final class FormUploaderTest extends \PHPUnit\Framework\TestCase
             ->with()
             ->willReturn($formMock);
 
-        $formUploader = new FormUploader($fileUploaderMock, $coreParametersHelperMock);
+        $formUploader = new FormUploader($fileUploaderMock, $coreParametersHelperMock, $this->createDisabledStorage());
 
         $actual = $formUploader->getCompleteFilePath($fieldMock, 'fileName');
 
@@ -287,7 +289,7 @@ final class FormUploaderTest extends \PHPUnit\Framework\TestCase
             ->with('form_upload_dir')
             ->willReturn($this->uploadDir);
 
-        $formUploader = new FormUploader($fileUploaderMock, $coreParametersHelperMock);
+        $formUploader = new FormUploader($fileUploaderMock, $coreParametersHelperMock, $this->createDisabledStorage());
 
         $formMock = $this->createMock(Form::class);
 
@@ -335,11 +337,300 @@ final class FormUploaderTest extends \PHPUnit\Framework\TestCase
             ->method('getId')
             ->willReturnOnConsecutiveCalls($this->formId1, null);
 
-        $formUploader = new FormUploader($fileUploaderMock, $coreParametersHelperMock);
+        $formUploader = new FormUploader($fileUploaderMock, $coreParametersHelperMock, $this->createDisabledStorage());
         $formUploader->deleteFilesOfForm($formMock);
 
         $formMock->deletedId = $this->formId1;
 
         $formUploader->deleteFilesOfForm($formMock);
+    }
+
+    private function createDisabledStorage(): MediaStorage
+    {
+        $storage = $this->createMock(MediaStorage::class);
+        $storage->method('isEnabled')->willReturn(false);
+        $storage->expects($this->never())->method('putFile');
+        $storage->expects($this->never())->method('delete');
+        $storage->expects($this->never())->method('deletePrefix');
+        $storage->expects($this->never())->method('downloadTo');
+
+        return $storage;
+    }
+
+    private function createEnabledUploader(MediaStorage $storage, ?FileUploader $fileUploader = null): FormUploader
+    {
+        $params = $this->createStub(CoreParametersHelper::class);
+        $params->method('get')->willReturn($this->uploadDir);
+        $storage->method('isEnabled')->willReturn(true);
+
+        return new FormUploader($fileUploader ?? $this->createStub(FileUploader::class), $params, $storage);
+    }
+
+    private function createField(int $formId, int $fieldId, string $alias = 'f'): Field
+    {
+        $form = $this->createStub(Form::class);
+        $form->method('getId')->willReturn($formId);
+        $field = $this->createStub(Field::class);
+        $field->method('getId')->willReturn($fieldId);
+        $field->method('getForm')->willReturn($form);
+        $field->method('getAlias')->willReturn($alias);
+        $field->method('isFileType')->willReturn(true);
+
+        return $field;
+    }
+
+    public function testUploadPutsEachFileUnderFormFieldKeyAndRemovesLocal(): void
+    {
+        $storage      = $this->createMock(MediaStorage::class);
+        $fileUploader = $this->createMock(FileUploader::class);
+        $uploader     = $this->createEnabledUploader($storage, $fileUploader);
+
+        $fileUploader->method('upload')->willReturnOnConsecutiveCalls('a.txt', 'b.txt');
+
+        $puts = [];
+        $storage->expects($this->exactly(2))->method('putFile')
+            ->willReturnCallback(function (string $key, string $path) use (&$puts): string {
+                $puts[$key] = $path;
+
+                return 'https://s3/'.$key;
+            });
+
+        $deleted = [];
+        $fileUploader->method('delete')->willReturnCallback(function ($path) use (&$deleted): void {
+            $deleted[] = $path;
+        });
+
+        $crate = new UploadFileCrate();
+        $crate->addFile($this->createStub(UploadedFile::class), $this->createField(1, 10, 'one'));
+        $crate->addFile($this->createStub(UploadedFile::class), $this->createField(2, 20, 'two'));
+        $submission = new Submission();
+        $submission->setResults([]);
+
+        // fixRotationJPG runs exif_imagetype on a real path: create real files.
+        @mkdir($this->uploadDir.'/1/10', 0777, true);
+        @mkdir($this->uploadDir.'/2/20', 0777, true);
+        file_put_contents($this->uploadDir.'/1/10/a.txt', str_repeat('a', 64));
+        file_put_contents($this->uploadDir.'/2/20/b.txt', str_repeat('b', 64));
+
+        try {
+            $uploader->uploadFiles($crate, $submission);
+        } finally {
+            @unlink($this->uploadDir.'/1/10/a.txt');
+            @unlink($this->uploadDir.'/2/20/b.txt');
+            @rmdir($this->uploadDir.'/1/10');
+            @rmdir($this->uploadDir.'/1');
+            @rmdir($this->uploadDir.'/2/20');
+            @rmdir($this->uploadDir.'/2');
+        }
+
+        $this->assertSame([
+            'media/files/form/1/10/a.txt' => $this->uploadDir.'/1/10/a.txt',
+            'media/files/form/2/20/b.txt' => $this->uploadDir.'/2/20/b.txt',
+        ], $puts);
+        $this->assertSame([$this->uploadDir.'/1/10/a.txt', $this->uploadDir.'/2/20/b.txt'], $deleted);
+        $this->assertSame(['one' => 'a.txt', 'two' => 'b.txt'], $submission->getResults());
+    }
+
+    public function testUploadFailureRollsBackPutObjectsAndThrowsFileUploadException(): void
+    {
+        $storage      = $this->createMock(MediaStorage::class);
+        $fileUploader = $this->createMock(FileUploader::class);
+        $uploader     = $this->createEnabledUploader($storage, $fileUploader);
+
+        $fileUploader->method('upload')->willReturnOnConsecutiveCalls('a.txt', 'b.txt');
+
+        $calls = 0;
+        $storage->method('putFile')->willReturnCallback(function (string $key) use (&$calls): string {
+            if (2 === ++$calls) {
+                throw new MediaStorageException('boom');
+            }
+
+            return 'https://s3/'.$key;
+        });
+        $storage->expects($this->once())->method('delete')->with('media/files/form/1/10/a.txt');
+
+        $deleted = [];
+        $fileUploader->method('delete')->willReturnCallback(function ($path) use (&$deleted): void {
+            $deleted[] = $path;
+        });
+
+        $crate = new UploadFileCrate();
+        $crate->addFile($this->createStub(UploadedFile::class), $this->createField(1, 10, 'one'));
+        $crate->addFile($this->createStub(UploadedFile::class), $this->createField(1, 11, 'two'));
+        $submission = new Submission();
+        $submission->setResults([]);
+
+        @mkdir($this->uploadDir.'/1/10', 0777, true);
+        @mkdir($this->uploadDir.'/1/11', 0777, true);
+        file_put_contents($this->uploadDir.'/1/10/a.txt', str_repeat('a', 64));
+        file_put_contents($this->uploadDir.'/1/11/b.txt', str_repeat('b', 64));
+
+        try {
+            $uploader->uploadFiles($crate, $submission);
+            $this->fail('Expected FileUploadException');
+        } catch (FileUploadException $e) {
+            $this->assertSame('two', $e->getMessage());
+        } finally {
+            @unlink($this->uploadDir.'/1/10/a.txt');
+            @unlink($this->uploadDir.'/1/11/b.txt');
+            @rmdir($this->uploadDir.'/1/10');
+            @rmdir($this->uploadDir.'/1/11');
+            @rmdir($this->uploadDir.'/1');
+        }
+
+        // a.txt was already unlinked after its successful put; its rollback is the S3 delete above.
+        $this->assertContains($this->uploadDir.'/1/11/b.txt', $deleted);
+        $this->assertSame([], $submission->getResults());
+    }
+
+    public function testDeleteFilesOfFormDeletesPrefix(): void
+    {
+        $storage  = $this->createMock(MediaStorage::class);
+        $uploader = $this->createEnabledUploader($storage);
+
+        $storage->expects($this->once())->method('deletePrefix')->with('media/files/form/3/');
+
+        $form = $this->createStub(Form::class);
+        $form->method('getId')->willReturn(3);
+        $uploader->deleteFilesOfForm($form);
+    }
+
+    public function testDeleteAllFilesOfFormFieldDeletesPrefix(): void
+    {
+        $storage  = $this->createMock(MediaStorage::class);
+        $uploader = $this->createEnabledUploader($storage);
+
+        $storage->expects($this->once())->method('deletePrefix')->with('media/files/form/3/7/');
+
+        $uploader->deleteAllFilesOfFormField($this->createField(3, 7));
+    }
+
+    public function testDeleteUploadedFilesDeletesEachKey(): void
+    {
+        $storage  = $this->createMock(MediaStorage::class);
+        $uploader = $this->createEnabledUploader($storage);
+
+        $keys = [];
+        $storage->expects($this->exactly(2))->method('delete')
+            ->willReturnCallback(function (string $key) use (&$keys): void {
+                $keys[] = $key;
+            });
+
+        $form = $this->createStub(Form::class);
+        $form->method('getId')->willReturn(3);
+        $form->method('getFields')->willReturn(new \Doctrine\Common\Collections\ArrayCollection([
+            $this->createField(3, 7, 'one'),
+            $this->createField(3, 8, 'two'),
+        ]));
+        $submission = $this->createStub(Submission::class);
+        $submission->method('getForm')->willReturn($form);
+        $submission->method('getResults')->willReturn(['one' => 'a.txt', 'two' => 'b.txt']);
+
+        $uploader->deleteUploadedFiles($submission);
+
+        $this->assertSame(['media/files/form/3/7/a.txt', 'media/files/form/3/8/b.txt'], $keys);
+    }
+
+    public function testDeleteUploadedFilesSkipsUnsafeNames(): void
+    {
+        $storage  = $this->createMock(MediaStorage::class);
+        $uploader = $this->createEnabledUploader($storage);
+        $storage->expects($this->never())->method('delete');
+
+        $form = $this->createStub(Form::class);
+        $form->method('getFields')->willReturn(new \Doctrine\Common\Collections\ArrayCollection([
+            $this->createField(3, 7, 'one'),
+            $this->createField(3, 8, 'two'),
+        ]));
+        $submission = $this->createStub(Submission::class);
+        $submission->method('getForm')->willReturn($form);
+        $submission->method('getResults')->willReturn(['one' => '../x', 'two' => 'a/b']);
+
+        $uploader->deleteUploadedFiles($submission);
+    }
+
+    public function testGetLocalCopyDownloadsWhenMissingLocally(): void
+    {
+        $storage  = $this->createMock(MediaStorage::class);
+        $uploader = $this->createEnabledUploader($storage);
+
+        $storage->expects($this->once())->method('downloadTo')
+            ->with('media/files/form/1/10/pic.jpg', $this->callback(
+                fn (string $path): bool => str_starts_with($path, sys_get_temp_dir().'/mautic-form-') && str_ends_with($path, '-pic.jpg')
+            ));
+
+        $path = $uploader->getLocalCopy($this->createField(1, 10), 'pic.jpg');
+
+        $this->assertStringEndsWith('-pic.jpg', $path);
+    }
+
+    public function testGetLocalCopyReturnsLocalPathWhenFileExists(): void
+    {
+        $storage = $this->createMock(MediaStorage::class);
+        $storage->expects($this->never())->method('downloadTo');
+        $uploader = $this->createEnabledUploader($storage);
+
+        @mkdir($this->uploadDir.'/1/10', 0777, true);
+        file_put_contents($this->uploadDir.'/1/10/pic.jpg', str_repeat('x', 64));
+        try {
+            $this->assertSame($this->uploadDir.'/1/10/pic.jpg', $uploader->getLocalCopy($this->createField(1, 10), 'pic.jpg'));
+        } finally {
+            @unlink($this->uploadDir.'/1/10/pic.jpg');
+            @rmdir($this->uploadDir.'/1/10');
+            @rmdir($this->uploadDir.'/1');
+        }
+    }
+
+    public function testGetFileKeyAndUrl(): void
+    {
+        $storage = $this->createMock(MediaStorage::class);
+        $storage->method('getPublicUrl')->willReturnCallback(fn (string $k): string => 'https://s3/'.$k);
+        $uploader = $this->createEnabledUploader($storage);
+        $field    = $this->createField(1, 10);
+
+        $this->assertSame('media/files/form/1/10/a b.txt', $uploader->getFileKey($field, 'a b.txt'));
+        $this->assertSame('https://s3/media/files/form/1/10/a b.txt', $uploader->getFileUrl($field, 'a b.txt'));
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function unsafeNames(): iterable
+    {
+        yield 'traversal' => ['../x'];
+        yield 'slash' => ['a/b'];
+        yield 'backslash' => ['a\\b'];
+        yield 'dot' => ['.'];
+        yield 'dotdot' => ['..'];
+        yield 'empty' => [''];
+        yield 'nul' => ["a\0b"];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('unsafeNames')]
+    public function testUnsafeFileNamesAreRejectedEverywhere(string $name): void
+    {
+        $uploader = $this->createEnabledUploader($this->createMock(MediaStorage::class));
+        $field    = $this->createField(1, 10);
+
+        foreach (['getFileKey', 'getFileUrl', 'getLocalCopy', 'getCompleteFilePath'] as $method) {
+            try {
+                $uploader->{$method}($field, $name);
+                $this->fail($method.' accepted '.json_encode($name));
+            } catch (\InvalidArgumentException) {
+                $this->addToAssertionCount(1);
+            }
+        }
+    }
+
+    public function testDisabledKeepsLocalBehavior(): void
+    {
+        $uploader = new FormUploader($this->createStub(FileUploader::class), $this->createStub(CoreParametersHelper::class), $this->createDisabledStorage());
+        $field    = $this->createField(1, 10);
+
+        $this->assertNull($uploader->getFileUrl($field, 'a.txt'));
+        $this->assertSame('media/files/form/1/10/a.txt', $uploader->getFileKey($field, 'a.txt'));
+        // No local file and storage disabled: returns the (missing) local path, never downloads.
+        $this->assertStringEndsWith('/1/10/a.txt', $uploader->getLocalCopy($field, 'a.txt'));
+        $uploader->deleteAllFilesOfFormField($field);
     }
 }

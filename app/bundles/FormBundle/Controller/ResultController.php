@@ -23,6 +23,7 @@ use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\Filesystem\Filesystem;
 use Symfony\Component\Form\FormFactoryInterface;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\RequestStack;
 use Symfony\Component\HttpFoundation\Response;
@@ -215,10 +216,20 @@ class ResultController extends CommonFormController
         }
 
         $fileName = $results[$field];
-        $file     = $formUploader->getCompleteFilePath($fieldEntity, $fileName);
+
+        try {
+            $file = $formUploader->getCompleteFilePath($fieldEntity, $fileName);
+            $url  = $formUploader->getFileUrl($fieldEntity, $fileName);
+        } catch (\InvalidArgumentException) {
+            throw $this->createNotFoundException();
+        }
 
         $fs = new Filesystem();
         if (!$fs->exists($file)) {
+            if (null !== $url) {
+                return new RedirectResponse($url);
+            }
+
             throw $this->createNotFoundException();
         }
 
@@ -244,10 +255,19 @@ class ResultController extends CommonFormController
             $this->throwAccessDenied();
         }
 
-        $file = $formUploader->getCompleteFilePath($fieldEntity, $fileName);
+        try {
+            $file = $formUploader->getCompleteFilePath($fieldEntity, $fileName);
+            $url  = $formUploader->getFileUrl($fieldEntity, $fileName);
+        } catch (\InvalidArgumentException) {
+            throw $this->createNotFoundException();
+        }
 
         $fs   = new Filesystem();
         if (!$fs->exists($file)) {
+            if (null !== $url) {
+                return new RedirectResponse($url);
+            }
+
             throw $this->createNotFoundException();
         }
 

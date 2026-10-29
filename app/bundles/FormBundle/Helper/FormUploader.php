@@ -3,8 +3,10 @@
 namespace Mautic\FormBundle\Helper;
 
 use Mautic\CoreBundle\Exception\FileUploadException;
+use Mautic\CoreBundle\Exception\MediaStorageException;
 use Mautic\CoreBundle\Helper\CoreParametersHelper;
 use Mautic\CoreBundle\Helper\FileUploader;
+use Mautic\CoreBundle\Storage\MediaStorage;
 use Mautic\FormBundle\Crate\UploadFileCrate;
 use Mautic\FormBundle\Entity\Field;
 use Mautic\FormBundle\Entity\Form;
@@ -15,6 +17,7 @@ class FormUploader
     public function __construct(
         private readonly FileUploader $fileUploader,
         private readonly CoreParametersHelper $coreParametersHelper,
+        private readonly MediaStorage $mediaStorage,
     ) {
     }
 
@@ -24,6 +27,7 @@ class FormUploader
     public function uploadFiles(UploadFileCrate $filesToUpload, Submission $submission): void
     {
         $uploadedFiles = [];
+        $uploadedKeys  = [];
         $result        = $submission->getResults();
         $alias         = ''; // Only for IDE - will be overriden by foreach
 
@@ -37,9 +41,23 @@ class FormUploader
                 $uploadedFile    = $uploadDir.DIRECTORY_SEPARATOR.$fileName;
                 $this->fixRotationJPG($uploadedFile);
                 $uploadedFiles[] =$uploadedFile;
+
+                if ($this->mediaStorage->isEnabled()) {
+                    $key = $this->getFileKey($field, $fileName);
+                    $this->mediaStorage->putFile($key, $uploadedFile);
+                    $uploadedKeys[] = $key;
+                    $this->fileUploader->delete($uploadedFile);
+                }
             }
             $submission->setResults($result);
-        } catch (FileUploadException) {
+        } catch (FileUploadException|MediaStorageException|\InvalidArgumentException) {
+            foreach ($uploadedKeys as $key) {
+                try {
+                    $this->mediaStorage->delete($key);
+                } catch (MediaStorageException) {
+                    // Best effort rollback; the original failure is what matters.
+                }
+            }
             foreach ($uploadedFiles as $filePath) {
                 $this->fileUploader->delete($filePath);
             }
@@ -52,9 +70,66 @@ class FormUploader
      */
     public function getCompleteFilePath(Field $field, $fileName): string
     {
+        $this->assertSafeFileName((string) $fileName);
         $uploadDir = $this->getUploadDir($field);
 
         return $uploadDir.DIRECTORY_SEPARATOR.$fileName;
+    }
+
+    /**
+     * Whether the name is a plain file name (no directories, no traversal, no NUL).
+     */
+    public function isSafeFileName(string $fileName): bool
+    {
+        return '' !== $fileName
+            && '.' !== $fileName
+            && '..' !== $fileName
+            && !str_contains($fileName, "\0")
+            && !str_contains($fileName, '/')
+            && !str_contains($fileName, '\\')
+            && basename($fileName) === $fileName;
+    }
+
+    /**
+     * @throws \InvalidArgumentException If the file name is not a plain file name
+     */
+    public function getFileKey(Field $field, string $fileName): string
+    {
+        $this->assertSafeFileName($fileName);
+
+        return MediaStorage::FORMS_PREFIX.$field->getForm()->getId().'/'.$field->getId().'/'.$fileName;
+    }
+
+    /**
+     * Public S3 URL of the file, or null when S3 storage is disabled.
+     *
+     * @throws \InvalidArgumentException If the file name is not a plain file name
+     */
+    public function getFileUrl(Field $field, string $fileName): ?string
+    {
+        $key = $this->getFileKey($field, $fileName);
+
+        return $this->mediaStorage->isEnabled() ? $this->mediaStorage->getPublicUrl($key) : null;
+    }
+
+    /**
+     * Returns the local path when the file exists locally, otherwise a temp copy downloaded from S3.
+     * The caller must delete the copy when it differs from getCompleteFilePath().
+     *
+     * @throws \InvalidArgumentException If the file name is not a plain file name
+     * @throws MediaStorageException
+     */
+    public function getLocalCopy(Field $field, string $fileName): string
+    {
+        $local = $this->getCompleteFilePath($field, $fileName);
+        if (is_file($local) || !$this->mediaStorage->isEnabled()) {
+            return $local;
+        }
+
+        $tmp = sys_get_temp_dir().'/mautic-form-'.uniqid().'-'.$fileName;
+        $this->mediaStorage->downloadTo($this->getFileKey($field, $fileName), $tmp);
+
+        return $tmp;
     }
 
     public function deleteAllFilesOfFormField(Field $field): void
@@ -65,6 +140,10 @@ class FormUploader
 
         $uploadDir = $this->getUploadDir($field);
         $this->fileUploader->delete($uploadDir);
+
+        if ($this->mediaStorage->isEnabled()) {
+            $this->mediaStorage->deletePrefix(MediaStorage::FORMS_PREFIX.$field->getForm()->getId().'/'.$field->getId().'/');
+        }
     }
 
     public function deleteFilesOfForm(Form $form): void
@@ -72,6 +151,10 @@ class FormUploader
         $formId        = $form->getId() ?: $form->deletedId;
         $formUploadDir = $this->getUploadDirOfForm($formId);
         $this->fileUploader->delete($formUploadDir);
+
+        if ($this->mediaStorage->isEnabled()) {
+            $this->mediaStorage->deletePrefix(MediaStorage::FORMS_PREFIX.$formId.'/');
+        }
     }
 
     /**
@@ -95,8 +178,23 @@ class FormUploader
         }
 
         $fileName = $results[$alias];
+        if (!is_string($fileName) || !$this->isSafeFileName($fileName)) {
+            return;
+        }
+
         $filePath = $this->getCompleteFilePath($field, $fileName);
         $this->fileUploader->delete($filePath);
+
+        if ($this->mediaStorage->isEnabled()) {
+            $this->mediaStorage->delete($this->getFileKey($field, $fileName));
+        }
+    }
+
+    private function assertSafeFileName(string $fileName): void
+    {
+        if (!$this->isSafeFileName($fileName)) {
+            throw new \InvalidArgumentException('Invalid form upload file name.');
+        }
     }
 
     private function getUploadDir(Field $field): string

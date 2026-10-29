@@ -209,6 +209,7 @@ return [
                 'arguments' => [
                     'mautic.helper.file_uploader',
                     'mautic.helper.core_parameters',
+                    'mautic.storage.media',
                 ],
             ],
             'mautic.form.helper.token' => [
