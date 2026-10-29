@@ -557,7 +557,11 @@ class LeadController extends FormController
                     if ('custom' === $image) {
                         // Check for a file
                         if ($form['custom_avatar']->getData()) {
-                            $this->uploadAvatar($request, $avatarHelper, $lead);
+                            try {
+                                $this->uploadAvatar($request, $avatarHelper, $lead);
+                            } catch (\Exception $e) {
+                                $this->addFlashMessage('mautic.lead.avatar.upload_failed', [], 'error');
+                            }
                         }
                     }
 
@@ -758,7 +762,11 @@ class LeadController extends FormController
                         // Check for a file
                         $file = $form['custom_avatar']->getData();
                         if ($file instanceof UploadedFile) {
-                            $this->uploadAvatar($request, $avatarHelper, $lead);
+                            try {
+                                $this->uploadAvatar($request, $avatarHelper, $lead);
+                            } catch (\Exception $e) {
+                                $this->addFlashMessage('mautic.lead.avatar.upload_failed', [], 'error');
+                            }
 
                             // Note the avatar update so that it can be forced to update
                             $request->getSession()->set('mautic.lead.avatar.updated', true);

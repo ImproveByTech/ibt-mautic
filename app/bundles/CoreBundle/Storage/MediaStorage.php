@@ -26,6 +26,13 @@ class MediaStorage
     public const FORMS_PREFIX      = 'media/files/form/';
     public const DASHBOARDS_PREFIX = 'media/dashboards/';
 
+    private const INLINE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf'];
+
+    private const ACTIVE_TYPES = [
+        'application/xhtml+xml', 'application/xml', 'text/xml', 'application/javascript',
+        'application/x-javascript', 'application/ecmascript', 'text/javascript', 'text/html',
+    ];
+
     private const PARAMETERS = ['s3_bucket', 's3_region', 's3_access_key_id', 's3_secret_access_key', 's3_root_directory'];
 
     public function __construct(
@@ -65,8 +72,7 @@ class MediaStorage
             $this->execute('PutObject', [
                 'Key'         => $this->fullKey($key),
                 'Body'        => $handle,
-                'ContentType' => $mime,
-            ]);
+            ] + $this->contentHeaders($mime));
         } finally {
             if (is_resource($handle)) {
                 fclose($handle);
@@ -74,6 +80,32 @@ class MediaStorage
         }
 
         return $this->getPublicUrl($key);
+    }
+
+    /**
+     * The bucket is public, so anything a browser could render as active content must never be served as such.
+     *
+     * @return array<string, string>
+     */
+    private function contentHeaders(string $mime): array
+    {
+        $mime = strtolower(trim(explode(';', $mime)[0]));
+
+        if (in_array($mime, self::INLINE_TYPES, true)) {
+            return ['ContentType' => $mime];
+        }
+
+        if ('image/svg+xml' === $mime) {
+            return ['ContentType' => $mime, 'ContentDisposition' => 'attachment'];
+        }
+
+        $active = in_array($mime, self::ACTIVE_TYPES, true)
+            || (str_starts_with($mime, 'text/') && !in_array($mime, ['text/plain', 'text/csv'], true));
+
+        return [
+            'ContentType'        => $active ? 'application/octet-stream' : $mime,
+            'ContentDisposition' => 'attachment',
+        ];
     }
 
     public function putContents(string $key, string $contents): string
@@ -84,8 +116,7 @@ class MediaStorage
         $this->execute('PutObject', [
             'Key'         => $this->fullKey($key),
             'Body'        => $contents,
-            'ContentType' => $mime,
-        ]);
+        ] + $this->contentHeaders($mime));
 
         return $this->getPublicUrl($key);
     }

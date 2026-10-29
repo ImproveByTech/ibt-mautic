@@ -55,6 +55,11 @@ final class AvatarHelperTest extends TestCase
         @rmdir($this->tmpDir);
     }
 
+    private static function PNG(): string
+    {
+        return (string) base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==');
+    }
+
     private function helper(): AvatarHelper
     {
         $default = new DefaultAvatarHelper($this->assetsHelper);
@@ -89,7 +94,7 @@ final class AvatarHelperTest extends TestCase
     public function testStoreUploadedAvatarPutsToS3(): void
     {
         $path = $this->tmpDir.'/upload.png';
-        file_put_contents($path, 'img');
+        file_put_contents($path, self::PNG());
         $file = new UploadedFile($path, 'upload.png', null, null, true);
 
         $this->mediaStorage->method('isEnabled')->willReturn(true);
@@ -105,7 +110,7 @@ final class AvatarHelperTest extends TestCase
     public function testStoreUploadedAvatarPropagatesS3Failure(): void
     {
         $path = $this->tmpDir.'/upload.png';
-        file_put_contents($path, 'img');
+        file_put_contents($path, self::PNG());
         $file = new UploadedFile($path, 'upload.png', null, null, true);
 
         $this->mediaStorage->method('isEnabled')->willReturn(true);
@@ -119,7 +124,7 @@ final class AvatarHelperTest extends TestCase
     {
         $png = $this->tmpDir.'/in.png';
         $txt = $this->tmpDir.'/in.txt';
-        file_put_contents($png, 'img');
+        file_put_contents($png, self::PNG());
         file_put_contents($txt, 'text');
 
         $this->mediaStorage->method('isEnabled')->willReturn(true);
@@ -167,14 +172,60 @@ final class AvatarHelperTest extends TestCase
         $this->mediaStorage->expects($this->never())->method('getPublicUrl');
 
         $png = $this->tmpDir.'/in.png';
-        file_put_contents($png, 'img');
+        file_put_contents($png, self::PNG());
         $helper = $this->helper();
         $helper->createAvatarFromFile($this->lead(), $png);
         $this->assertFileExists($this->tmpDir.'/lead_avatars/avatar42');
 
         $upload = $this->tmpDir.'/up.png';
-        file_put_contents($upload, 'img2');
+        file_put_contents($upload, self::PNG());
         $helper->storeUploadedAvatar($this->lead(43), new UploadedFile($upload, 'up.png', null, null, true));
-        $this->assertSame('img2', file_get_contents($this->tmpDir.'/lead_avatars/avatar43'));
+        $this->assertSame(self::PNG(), file_get_contents($this->tmpDir.'/lead_avatars/avatar43'));
+    }
+
+    public function testHtmlContentWithImageExtensionIsRejected(): void
+    {
+        $this->mediaStorage->method('isEnabled')->willReturn(true);
+        $this->mediaStorage->expects($this->never())->method('putFile');
+
+        $evil = $this->tmpDir.'/evil.png';
+        file_put_contents($evil, '<html><script>alert(1)</script></html>');
+        $helper = $this->helper();
+
+        try {
+            $helper->createAvatarFromFile($this->lead(), $evil);
+            $this->fail('Expected exception');
+        } catch (\Exception $e) {
+            $this->assertSame('File is not image', $e->getMessage());
+        }
+
+        $this->expectExceptionMessage('File is not image');
+        $helper->storeUploadedAvatar($this->lead(), new UploadedFile($evil, 'evil.png', null, null, true));
+    }
+
+    public function testHtmlContentIsRejectedWhenDisabledAndNothingCopied(): void
+    {
+        $this->mediaStorage->method('isEnabled')->willReturn(false);
+        $evil = $this->tmpDir.'/evil.png';
+        file_put_contents($evil, '<svg onload="alert(1)"></svg>');
+
+        try {
+            $this->helper()->createAvatarFromFile($this->lead(), $evil);
+            $this->fail('Expected exception');
+        } catch (\Exception) {
+        }
+        $this->assertFileDoesNotExist($this->tmpDir.'/lead_avatars/avatar42');
+    }
+
+    public function testExistingLocalAvatarStillServedLocallyWhenS3Enabled(): void
+    {
+        mkdir($this->tmpDir.'/lead_avatars');
+        file_put_contents($this->tmpDir.'/lead_avatars/avatar42', self::PNG());
+
+        $this->mediaStorage->method('isEnabled')->willReturn(true);
+        $this->mediaStorage->expects($this->never())->method('getPublicUrl');
+
+        // The Packages stub yields an empty URL; what matters is that S3 was not consulted.
+        $this->assertSame('', $this->helper()->getAvatar($this->lead(42, new \DateTime('@1700000000'))));
     }
 }

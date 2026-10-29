@@ -133,6 +133,51 @@ class MediaStorageTest extends TestCase
         $this->assertNull($storage->keyFromPublicUrl('http://mautic-selfhosted.s3.sa-east-1.amazonaws.com/gpsdapena/media/files/x.pdf'));
     }
 
+    /**
+     * @return iterable<string, array{string, string, string, ?string}>
+     */
+    public static function contentTypeProvider(): iterable
+    {
+        yield 'png'  => ['a.png', 'image/png', 'image/png', null];
+        yield 'pdf'  => ['a.pdf', 'application/pdf', 'application/pdf', null];
+        yield 'svg'  => ['a.svg', 'image/svg+xml', 'image/svg+xml', 'attachment'];
+        yield 'html' => ['a.html', 'text/html', 'application/octet-stream', 'attachment'];
+        yield 'xml'  => ['a.xml', 'application/xml', 'application/octet-stream', 'attachment'];
+        yield 'js'   => ['a.js', 'text/javascript', 'application/octet-stream', 'attachment'];
+        yield 'css'  => ['a.css', 'text/css', 'application/octet-stream', 'attachment'];
+        yield 'txt'  => ['a.txt', 'text/plain', 'text/plain', 'attachment'];
+        yield 'docx' => ['a.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'attachment'];
+    }
+
+    #[DataProvider('contentTypeProvider')]
+    public function testPutContentsContentTypeAndDisposition(string $name, string $mime, string $expectedType, ?string $disposition): void
+    {
+        $this->mock->append(new Result([]));
+        $this->storage()->putContents('media/files/'.$name, 'x');
+
+        $command = end($this->commands);
+        $this->assertSame($expectedType, $command['ContentType']);
+        if (null === $disposition) {
+            $this->assertFalse(isset($command['ContentDisposition']));
+        } else {
+            $this->assertSame($disposition, $command['ContentDisposition']);
+        }
+    }
+
+    public function testPutFileSniffsHtmlContentDespiteImageName(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'ms').'.png';
+        file_put_contents($path, '<!DOCTYPE html><html><script>alert(1)</script></html>');
+        $this->mock->append(new Result([]));
+
+        $this->storage()->putFile('media/images/evil.png', $path);
+        @unlink($path);
+
+        $command = end($this->commands);
+        $this->assertSame('application/octet-stream', $command['ContentType']);
+        $this->assertSame('attachment', $command['ContentDisposition']);
+    }
+
     public function testAwsErrorBecomesMediaStorageException(): void
     {
         $this->mock->append(static fn (CommandInterface $cmd) => new S3Exception('boom', $cmd));
