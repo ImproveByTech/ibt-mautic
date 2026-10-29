@@ -12,6 +12,7 @@ use Mautic\CoreBundle\Helper\CoreParametersHelper;
 use Mautic\CoreBundle\Helper\InputHelper;
 use Mautic\CoreBundle\Helper\PathsHelper;
 use Mautic\CoreBundle\Security\Permissions\CorePermissions;
+use Mautic\CoreBundle\Storage\ImageStorage;
 use Mautic\CoreBundle\Storage\MediaStorage;
 use Mautic\CoreBundle\Translation\Translator;
 use Psr\Log\LoggerInterface;
@@ -48,10 +49,10 @@ class FileApiController extends CommonApiController
      *
      * @return Response
      */
-    public function createAction(Request $request, PathsHelper $pathsHelper, LoggerInterface $mauticLogger, MediaStorage $mediaStorage, $dir)
+    public function createAction(Request $request, PathsHelper $pathsHelper, LoggerInterface $mauticLogger, MediaStorage $mediaStorage, ImageStorage $imageStorage, $dir)
     {
         if ($mediaStorage->isEnabled() && null !== ($subdir = $this->getRemoteImagesSubdir($request, $dir))) {
-            return $this->createRemoteImage($request, $pathsHelper, $mauticLogger, $mediaStorage, $subdir);
+            return $this->createRemoteImage($request, $pathsHelper, $mauticLogger, $imageStorage, $subdir);
         }
 
         try {
@@ -126,12 +127,12 @@ class FileApiController extends CommonApiController
      *
      * @return Response
      */
-    public function deleteAction(Request $request, PathsHelper $pathsHelper, LoggerInterface $mauticLogger, MediaStorage $mediaStorage, $dir, $file)
+    public function deleteAction(Request $request, PathsHelper $pathsHelper, LoggerInterface $mauticLogger, MediaStorage $mediaStorage, ImageStorage $imageStorage, $dir, $file)
     {
         $response = ['success' => false];
 
         if ($mediaStorage->isEnabled() && null !== ($subdir = $this->getRemoteImagesSubdir($request, $dir))) {
-            return $this->deleteRemoteImage($mediaStorage, $subdir, (string) $file);
+            return $this->deleteRemoteImage($mediaStorage, $imageStorage, $subdir, (string) $file);
         }
 
         try {
@@ -183,7 +184,7 @@ class FileApiController extends CommonApiController
         return MediaStorage::IMAGES_PREFIX.('' === $subdir ? '' : $subdir.'/');
     }
 
-    private function createRemoteImage(Request $request, PathsHelper $pathsHelper, LoggerInterface $mauticLogger, MediaStorage $mediaStorage, string $subdir): Response
+    private function createRemoteImage(Request $request, PathsHelper $pathsHelper, LoggerInterface $mauticLogger, ImageStorage $imageStorage, string $subdir): Response
     {
         $tmpDir = realpath($pathsHelper->getSystemPath('images', true));
         if (false === $tmpDir || !is_writable($tmpDir)) {
@@ -201,21 +202,15 @@ class FileApiController extends CommonApiController
                 return $this->returnError('The uploaded file can have only these extensions: '.implode(',', $this->allowedExtensions).'.', Response::HTTP_NOT_ACCEPTABLE);
             }
 
-            $fileName  = md5(uniqid()).'.'.$extension;
-            $localPath = $tmpDir.'/'.$fileName;
+            $fileName = md5(uniqid()).'.'.$extension;
             try {
                 $file->move($tmpDir, $fileName);
-                $url = $mediaStorage->putFile($this->remoteImagePrefix($subdir).$fileName, $localPath);
+                ['name' => $fileName, 'url' => $url] = $imageStorage->store($tmpDir, $fileName, $subdir);
             } catch (\Exception $e) {
                 // MediaStorageException or a failed move: never report success for a local-only file.
                 $mauticLogger->error($e->getMessage(), ['exception' => $e]);
 
                 return $this->returnError('The file could not be stored.', Response::HTTP_INTERNAL_SERVER_ERROR);
-            } finally {
-                // The file was created by this request.
-                if (is_file($localPath)) {
-                    @unlink($localPath);
-                }
             }
 
             $response[$this->entityNameOne]['link'] = $url;
@@ -244,14 +239,14 @@ class FileApiController extends CommonApiController
         return $this->handleView($this->view([$this->entityNameMulti => $names]));
     }
 
-    private function deleteRemoteImage(MediaStorage $mediaStorage, string $subdir, string $file): Response
+    private function deleteRemoteImage(MediaStorage $mediaStorage, ImageStorage $imageStorage, string $subdir, string $file): Response
     {
-        $name = basename($file);
-        if ('' === $name || '.' === $name || '..' === $name || str_contains($name, '/') || str_contains($name, "\0")) {
+        try {
+            $key = $imageStorage->getKey($file, $subdir);
+        } catch (\InvalidArgumentException) {
             return $this->returnError('File does not exist', Response::HTTP_NOT_FOUND);
         }
 
-        $key = $this->remoteImagePrefix($subdir).$name;
         try {
             if (!$mediaStorage->exists($key)) {
                 return $this->returnError('File does not exist', Response::HTTP_NOT_FOUND);

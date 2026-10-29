@@ -7,6 +7,7 @@ use Mautic\CoreBundle\Exception\MediaStorageException;
 use Mautic\CoreBundle\Helper\FileUploader;
 use Mautic\CoreBundle\Helper\InputHelper;
 use Mautic\CoreBundle\Helper\PathsHelper;
+use Mautic\CoreBundle\Storage\ImageStorage;
 use Mautic\CoreBundle\Storage\MediaStorage;
 use Symfony\Component\HttpFoundation\File\File;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
@@ -27,7 +28,7 @@ class FileController extends AjaxController
      *
      * @throws FileUploadException
      */
-    public function uploadAction(Request $request, PathsHelper $pathsHelper, FileUploader $fileUploader, MediaStorage $mediaStorage): JsonResponse
+    public function uploadAction(Request $request, PathsHelper $pathsHelper, FileUploader $fileUploader, MediaStorage $mediaStorage, ImageStorage $imageStorage): JsonResponse
     {
         $editor   = $request->get('editor');
         $mediaDir = $this->getMediaAbsolutePath($pathsHelper);
@@ -39,16 +40,10 @@ class FileController extends AjaxController
                     $fileName = $fileUploader->upload($mediaDir, $file);
                     $url      = null;
                     if ($mediaStorage->isEnabled()) {
-                        $localPath = $mediaDir.'/'.$fileName;
                         try {
-                            $url = $mediaStorage->putFile(MediaStorage::IMAGES_PREFIX.$fileName, $localPath);
+                            ['name' => $fileName, 'url' => $url] = $imageStorage->store($mediaDir, $fileName);
                         } catch (MediaStorageException) {
                             throw new FileUploadException('Could not store the uploaded image');
-                        } finally {
-                            // The upload step created this local file in this request.
-                            if (is_file($localPath)) {
-                                @unlink($localPath);
-                            }
                         }
                     }
                     $this->successfulResponse($request, $fileName, $editor, $url);
@@ -99,12 +94,12 @@ class FileController extends AjaxController
     /**
      * Delete a file from /media directory.
      */
-    public function deleteAction(Request $request, PathsHelper $pathsHelper, MediaStorage $mediaStorage): JsonResponse
+    public function deleteAction(Request $request, PathsHelper $pathsHelper, MediaStorage $mediaStorage, ImageStorage $imageStorage): JsonResponse
     {
         $src = InputHelper::clean($request->request->get('src'));
 
         if ($mediaStorage->isEnabled()) {
-            return $this->deleteRemote($src, $mediaStorage);
+            return $this->deleteRemote($src, $mediaStorage, $imageStorage);
         }
 
         $imagePath = $this->getMediaAbsolutePath($pathsHelper).'/'.basename($src);
@@ -181,11 +176,11 @@ class FileController extends AjaxController
         return $this->sendJsonResponse($this->response, $this->statusCode, false);
     }
 
-    private function deleteRemote(string $src, MediaStorage $mediaStorage): JsonResponse
+    private function deleteRemote(string $src, MediaStorage $mediaStorage, ImageStorage $imageStorage): JsonResponse
     {
-        $name = basename($src);
-
-        if ('' === $name || '.' === $name || '..' === $name || str_contains($name, '/') || str_contains($name, "\0")) {
+        try {
+            $key = $imageStorage->getKey($src);
+        } catch (\InvalidArgumentException) {
             $this->response['error'] = 'File does not exist';
             $this->statusCode        = Response::HTTP_INTERNAL_SERVER_ERROR;
 
@@ -193,7 +188,6 @@ class FileController extends AjaxController
         }
 
         try {
-            $key = MediaStorage::IMAGES_PREFIX.$name;
             if ($mediaStorage->exists($key)) {
                 $mediaStorage->delete($key);
                 $this->response['deleted'] = true;

@@ -10,6 +10,7 @@ use Mautic\CoreBundle\Helper\CoreParametersHelper;
 use Mautic\CoreBundle\Helper\FileUploader;
 use Mautic\CoreBundle\Helper\PathsHelper;
 use Mautic\CoreBundle\Storage\DTO\MediaObject;
+use Mautic\CoreBundle\Storage\ImageStorage;
 use Mautic\CoreBundle\Storage\MediaStorage;
 use MauticPlugin\GrapesJsBuilderBundle\Helper\FileManager;
 use PHPUnit\Framework\MockObject\MockObject;
@@ -72,29 +73,69 @@ class FileManagerTest extends TestCase
     public function testUploadReturnsS3UrlAndRemovesLocalFile(): void
     {
         $this->mediaStorage->method('isEnabled')->willReturn(true);
-        $this->fileUploader->method('upload')->willReturnCallback(function () {
-            file_put_contents($this->dir.'/images/abc.png', 'png');
-
-            return 'abc.png';
-        });
+        $this->fakeUploader(['abc.png']);
+        $pushed = [];
         $this->mediaStorage->expects($this->once())->method('putFile')
-            ->with('media/images/abc.png', $this->dir.'/images/abc.png')
-            ->willReturn('https://b.s3.r.amazonaws.com/root/media/images/abc.png');
+            ->willReturnCallback(function (string $key, string $local) use (&$pushed) {
+                $pushed[] = [$key, $local, is_file($local)];
+
+                return 'https://s3.test/'.$key;
+            });
 
         $urls = $this->manager()->uploadFiles($this->request());
 
-        $this->assertSame(['https://b.s3.r.amazonaws.com/root/media/images/abc.png'], $urls);
-        $this->assertFileDoesNotExist($this->dir.'/images/abc.png');
+        $this->assertCount(1, $urls);
+        $this->assertSame('https://s3.test/'.$pushed[0][0], $urls[0]);
+        $this->assertTrue($pushed[0][2], 'renamed local file existed when pushed');
+        $this->assertSame([], glob($this->dir.'/images/*'));
+    }
+
+    public function testStoredImageNameHasRandomPrefixAndKeepsExtension(): void
+    {
+        $this->mediaStorage->method('isEnabled')->willReturn(true);
+        $this->fakeUploader(['logo.png']);
+        $this->mediaStorage->method('putFile')->willReturnCallback(fn (string $key) => 'https://s3.test/'.$key);
+
+        $urls = $this->manager()->uploadFiles($this->request());
+
+        $this->assertMatchesRegularExpression('#^https://s3\.test/media/images/[0-9a-f]{16}-logo\.png$#', $urls[0]);
+    }
+
+    public function testSameOriginalNameUploadedTwiceGetsDistinctKeys(): void
+    {
+        $this->mediaStorage->method('isEnabled')->willReturn(true);
+        $this->fakeUploader(['logo.png', 'logo.png']);
+        $this->mediaStorage->method('putFile')->willReturnCallback(fn (string $key) => 'https://s3.test/'.$key);
+
+        $first  = $this->manager()->uploadFiles($this->request());
+        $second = $this->manager()->uploadFiles($this->request());
+
+        $this->assertNotSame($first[0], $second[0]);
+    }
+
+    public function testCollisionRegeneratesOnceThenFails(): void
+    {
+        $this->mediaStorage->method('isEnabled')->willReturn(true);
+        $this->fakeUploader(['logo.png', 'logo.png']);
+        $this->mediaStorage->method('putFile')->willReturnCallback(fn (string $key) => 'https://s3.test/'.$key);
+
+        // First attempt collides, second is free: upload succeeds.
+        $this->mediaStorage->expects($this->exactly(4))->method('exists')->willReturnOnConsecutiveCalls(true, false, true, true);
+        $this->assertCount(1, $this->manager()->uploadFiles($this->request()));
+
+        // Two collisions in a row: the upload fails and nothing is left locally.
+        try {
+            $this->manager()->uploadFiles($this->request());
+            $this->fail('Expected FileUploadException');
+        } catch (FileUploadException) {
+        }
+        $this->assertSame([], glob($this->dir.'/images/*'));
     }
 
     public function testUploadFailureRemovesLocalFileAndThrows(): void
     {
         $this->mediaStorage->method('isEnabled')->willReturn(true);
-        $this->fileUploader->method('upload')->willReturnCallback(function () {
-            file_put_contents($this->dir.'/images/abc.png', 'png');
-
-            return 'abc.png';
-        });
+        $this->fakeUploader(['abc.png']);
         $this->mediaStorage->method('putFile')->willThrowException(new MediaStorageException('boom'));
 
         try {
@@ -103,7 +144,37 @@ class FileManagerTest extends TestCase
         } catch (FileUploadException) {
         }
 
-        $this->assertFileDoesNotExist($this->dir.'/images/abc.png');
+        $this->assertSame([], glob($this->dir.'/images/*'));
+    }
+
+    public function testMultiFileFailureDeletesOnlyThisRequestsObjects(): void
+    {
+        $this->mediaStorage->method('isEnabled')->willReturn(true);
+        $this->fakeUploader(['a.png', 'b.png']);
+        $pushed = [];
+        $calls  = 0;
+        $this->mediaStorage->method('putFile')->willReturnCallback(function (string $key) use (&$pushed, &$calls) {
+            if (2 === ++$calls) {
+                throw new MediaStorageException('boom');
+            }
+            $pushed[] = $key;
+
+            return 'https://s3.test/'.$key;
+        });
+        $deleted = [];
+        $this->mediaStorage->method('delete')->willReturnCallback(function (string $key) use (&$deleted) {
+            $deleted[] = $key;
+        });
+
+        try {
+            $this->manager()->uploadFiles($this->request(2));
+            $this->fail('Expected FileUploadException');
+        } catch (FileUploadException) {
+        }
+
+        $this->assertCount(1, $pushed);
+        $this->assertSame($pushed, $deleted);
+        $this->assertSame([], glob($this->dir.'/images/*'));
     }
 
     public function testMediaFilesListsBucketNewestFirstAndPaginates(): void
@@ -189,15 +260,34 @@ class FileManagerTest extends TestCase
 
     private function manager(): FileManager
     {
-        return new FileManager($this->fileUploader, $this->coreParametersHelper, $this->pathsHelper, $this->mediaStorage);
+        return new FileManager($this->fileUploader, $this->coreParametersHelper, $this->pathsHelper, $this->mediaStorage, new ImageStorage($this->mediaStorage));
     }
 
-    private function request(): Request
+    /**
+     * @param string[] $names names returned by consecutive FileUploader::upload() calls (files are created locally)
+     */
+    private function fakeUploader(array $names): void
     {
-        $tmp = tempnam(sys_get_temp_dir(), 'up');
-        file_put_contents($tmp, 'png');
+        $names = array_values($names);
+        $i     = 0;
+        $this->fileUploader->method('upload')->willReturnCallback(function () use (&$i, $names) {
+            $name = $names[$i++ % count($names)];
+            file_put_contents($this->dir.'/images/'.$name, 'png');
+
+            return $name;
+        });
+    }
+
+    private function request(int $count = 1): Request
+    {
+        $uploads = [];
+        for ($n = 0; $n < $count; ++$n) {
+            $tmp = tempnam(sys_get_temp_dir(), 'up');
+            file_put_contents($tmp, 'png');
+            $uploads[] = new UploadedFile($tmp, 'x.png', 'image/png', null, true);
+        }
         $request = new Request();
-        $request->files->set('files', [new UploadedFile($tmp, 'x.png', 'image/png', null, true)]);
+        $request->files->set('files', $uploads);
 
         return $request;
     }

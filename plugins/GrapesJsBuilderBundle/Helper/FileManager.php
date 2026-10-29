@@ -10,6 +10,7 @@ use Mautic\CoreBundle\Helper\CoreParametersHelper;
 use Mautic\CoreBundle\Helper\FileUploader;
 use Mautic\CoreBundle\Helper\PathsHelper;
 use Mautic\CoreBundle\Storage\DTO\MediaObject;
+use Mautic\CoreBundle\Storage\ImageStorage;
 use Mautic\CoreBundle\Storage\MediaStorage;
 use Symfony\Component\Filesystem\Exception\IOException;
 use Symfony\Component\Filesystem\Filesystem;
@@ -27,6 +28,7 @@ class FileManager
         private readonly CoreParametersHelper $coreParametersHelper,
         private readonly PathsHelper $pathsHelper,
         private readonly MediaStorage $mediaStorage,
+        private readonly ImageStorage $imageStorage,
     ) {
     }
 
@@ -51,16 +53,30 @@ class FileManager
                 $this->fileUploader->validateImage($file);
             }
 
-            foreach ($files as $file) {
-                $fileName = $this->fileUploader->upload($uploadDir, $file);
+            $pushedKeys = [];
+            try {
+                foreach ($files as $file) {
+                    $fileName = $this->fileUploader->upload($uploadDir, $file);
 
-                if ($this->mediaStorage->isEnabled()) {
-                    $uploadedFiles[] = $this->pushToRemoteStorage($uploadDir.$fileName, $fileName);
+                    if ($this->mediaStorage->isEnabled()) {
+                        try {
+                            $stored = $this->imageStorage->store($uploadDir, $fileName);
+                        } catch (MediaStorageException $e) {
+                            throw new FileUploadException($e->getMessage(), 0, $e);
+                        }
+                        $pushedKeys[]    = $stored['key'];
+                        $uploadedFiles[] = $stored['url'];
 
-                    continue;
+                        continue;
+                    }
+
+                    $uploadedFiles[] = $this->getFullUrl($fileName);
                 }
+            } catch (FileUploadException $e) {
+                // Only keys created by this request.
+                $this->imageStorage->deleteQuietly($pushedKeys);
 
-                $uploadedFiles[] = $this->getFullUrl($fileName);
+                throw $e;
             }
         }
 
@@ -343,30 +359,7 @@ class FileManager
 
     private function getRemoteKey(string $fileName): string
     {
-        $name = basename($fileName);
-
-        if ('' === $name || '.' === $name || '..' === $name || str_contains($name, '/') || str_contains($name, "\0")) {
-            throw new \InvalidArgumentException('Invalid file name');
-        }
-
-        return MediaStorage::IMAGES_PREFIX.$name;
-    }
-
-    /**
-     * @throws FileUploadException
-     */
-    private function pushToRemoteStorage(string $localPath, string $fileName): string
-    {
-        try {
-            return $this->mediaStorage->putFile(MediaStorage::IMAGES_PREFIX.$fileName, $localPath);
-        } catch (MediaStorageException $e) {
-            throw new FileUploadException($e->getMessage(), 0, $e);
-        } finally {
-            // The upload step created this local file in this request, so it is ours to remove.
-            if (is_file($localPath)) {
-                @unlink($localPath);
-            }
-        }
+        return $this->imageStorage->getKey($fileName);
     }
 
     /**
