@@ -6,6 +6,7 @@ namespace MauticPlugin\GrapesJsBuilderBundle\Controller;
 
 use Mautic\CoreBundle\Controller\AjaxController;
 use Mautic\CoreBundle\Exception\FileUploadException;
+use Mautic\CoreBundle\Exception\MediaStorageException;
 use MauticPlugin\GrapesJsBuilderBundle\Helper\FileManager;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -30,7 +31,22 @@ class FileManagerController extends AjaxController
 
     public function deleteAction(Request $request, FileManager $fileManager): JsonResponse
     {
-        $fileName = basename($request->get('filename'));
+        $fileName = basename((string) $request->get('filename'));
+
+        if ($fileManager->usesRemoteStorage()) {
+            try {
+                if (!$fileManager->remoteFileExists($fileName)) {
+                    return $this->sendJsonResponse(['success'=> false]);
+                }
+
+                $fileManager->deleteFile($fileName);
+            } catch (\InvalidArgumentException|MediaStorageException) {
+                return $this->sendJsonResponse(['success'=> false]);
+            }
+
+            return $this->sendJsonResponse(['success'=> true]);
+        }
+
         $filePath = $fileManager->getCompleteFilePath($fileName);
 
         if (!file_exists($filePath) || !exif_imagetype($filePath)) {

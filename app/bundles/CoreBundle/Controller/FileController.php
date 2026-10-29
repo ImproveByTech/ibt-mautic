@@ -3,9 +3,11 @@
 namespace Mautic\CoreBundle\Controller;
 
 use Mautic\CoreBundle\Exception\FileUploadException;
+use Mautic\CoreBundle\Exception\MediaStorageException;
 use Mautic\CoreBundle\Helper\FileUploader;
 use Mautic\CoreBundle\Helper\InputHelper;
 use Mautic\CoreBundle\Helper\PathsHelper;
+use Mautic\CoreBundle\Storage\MediaStorage;
 use Symfony\Component\HttpFoundation\File\File;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -25,7 +27,7 @@ class FileController extends AjaxController
      *
      * @throws FileUploadException
      */
-    public function uploadAction(Request $request, PathsHelper $pathsHelper, FileUploader $fileUploader): JsonResponse
+    public function uploadAction(Request $request, PathsHelper $pathsHelper, FileUploader $fileUploader, MediaStorage $mediaStorage): JsonResponse
     {
         $editor   = $request->get('editor');
         $mediaDir = $this->getMediaAbsolutePath($pathsHelper);
@@ -35,7 +37,21 @@ class FileController extends AjaxController
                 try {
                     $fileUploader->validateImage($file);
                     $fileName = $fileUploader->upload($mediaDir, $file);
-                    $this->successfulResponse($request, $fileName, $editor);
+                    $url      = null;
+                    if ($mediaStorage->isEnabled()) {
+                        $localPath = $mediaDir.'/'.$fileName;
+                        try {
+                            $url = $mediaStorage->putFile(MediaStorage::IMAGES_PREFIX.$fileName, $localPath);
+                        } catch (MediaStorageException) {
+                            throw new FileUploadException('Could not store the uploaded image');
+                        } finally {
+                            // The upload step created this local file in this request.
+                            if (is_file($localPath)) {
+                                @unlink($localPath);
+                            }
+                        }
+                    }
+                    $this->successfulResponse($request, $fileName, $editor, $url);
                 } catch (FileUploadException) {
                     $this->failureResponse($editor);
                 }
@@ -48,8 +64,12 @@ class FileController extends AjaxController
     /**
      * List the files in /media directory.
      */
-    public function listAction(Request $request, PathsHelper $pathsHelper, FileUploader $fileUploader): JsonResponse
+    public function listAction(Request $request, PathsHelper $pathsHelper, FileUploader $fileUploader, MediaStorage $mediaStorage): JsonResponse
     {
+        if ($mediaStorage->isEnabled()) {
+            return $this->listRemote($fileUploader, $mediaStorage);
+        }
+
         $fnames = scandir($this->getMediaAbsolutePath($pathsHelper));
 
         if ($fnames) {
@@ -79,9 +99,14 @@ class FileController extends AjaxController
     /**
      * Delete a file from /media directory.
      */
-    public function deleteAction(Request $request, PathsHelper $pathsHelper): JsonResponse
+    public function deleteAction(Request $request, PathsHelper $pathsHelper, MediaStorage $mediaStorage): JsonResponse
     {
-        $src       = InputHelper::clean($request->request->get('src'));
+        $src = InputHelper::clean($request->request->get('src'));
+
+        if ($mediaStorage->isEnabled()) {
+            return $this->deleteRemote($src, $mediaStorage);
+        }
+
         $imagePath = $this->getMediaAbsolutePath($pathsHelper).'/'.basename($src);
 
         if (!file_exists($imagePath)) {
@@ -131,9 +156,62 @@ class FileController extends AjaxController
             .$this->coreParametersHelper->get('image_path');
     }
 
-    private function successfulResponse(Request $request, string $fileName, string $editor): void
+    private function listRemote(FileUploader $fileUploader, MediaStorage $mediaStorage): JsonResponse
     {
-        $filePath = $this->getMediaUrl($request).'/'.$fileName;
+        $allowed = array_map('strtolower', $fileUploader->getAllowedImageExtensions());
+
+        try {
+            foreach ($mediaStorage->listObjects(MediaStorage::IMAGES_PREFIX) as $object) {
+                $name = substr($object->key, strlen(MediaStorage::IMAGES_PREFIX));
+                // Mirror the local listing: top level files only.
+                if ('' === $name || str_contains($name, '/') || !in_array(strtolower(pathinfo($name, PATHINFO_EXTENSION)), $allowed, true)) {
+                    continue;
+                }
+
+                $this->response[] = [
+                    'url'   => $object->url,
+                    'thumb' => $object->url,
+                    'name'  => $name,
+                ];
+            }
+        } catch (MediaStorageException) {
+            $this->response['error'] = 'Images could not be listed';
+        }
+
+        return $this->sendJsonResponse($this->response, $this->statusCode, false);
+    }
+
+    private function deleteRemote(string $src, MediaStorage $mediaStorage): JsonResponse
+    {
+        $name = basename($src);
+
+        if ('' === $name || '.' === $name || '..' === $name || str_contains($name, '/') || str_contains($name, "\0")) {
+            $this->response['error'] = 'File does not exist';
+            $this->statusCode        = Response::HTTP_INTERNAL_SERVER_ERROR;
+
+            return $this->sendJsonResponse($this->response, $this->statusCode);
+        }
+
+        try {
+            $key = MediaStorage::IMAGES_PREFIX.$name;
+            if ($mediaStorage->exists($key)) {
+                $mediaStorage->delete($key);
+                $this->response['deleted'] = true;
+            } else {
+                $this->response['error'] = 'File does not exist';
+                $this->statusCode        = Response::HTTP_INTERNAL_SERVER_ERROR;
+            }
+        } catch (MediaStorageException) {
+            $this->response['error'] = 'File could not be deleted';
+            $this->statusCode        = Response::HTTP_INTERNAL_SERVER_ERROR;
+        }
+
+        return $this->sendJsonResponse($this->response, $this->statusCode);
+    }
+
+    private function successfulResponse(Request $request, string $fileName, string $editor, ?string $url = null): void
+    {
+        $filePath = $url ?? $this->getMediaUrl($request).'/'.$fileName;
         if (self::EDITOR_CKEDITOR === $editor) {
             $this->response['uploaded'] = true;
             $this->response['url']      = $filePath;

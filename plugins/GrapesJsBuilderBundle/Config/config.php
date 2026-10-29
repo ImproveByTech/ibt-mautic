@@ -51,16 +51,6 @@ return [
             ],
         ],
         'sync'         => [],
-        'helpers'      => [
-            'grapesjsbuilder.helper.filemanager' => [
-                'class'     => MauticPlugin\GrapesJsBuilderBundle\Helper\FileManager::class,
-                'arguments' => [
-                    'mautic.helper.file_uploader',
-                    'mautic.helper.core_parameters',
-                    'mautic.helper.paths',
-                ],
-            ],
-        ],
     ],
     'parameters' => [
         'image_path_exclude'     => ['flags', 'mejs'], // exclude certain folders from showing in the image browser

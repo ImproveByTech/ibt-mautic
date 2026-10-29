@@ -35,6 +35,7 @@ return function (ContainerConfigurator $configurator): void {
         'Translation/TranslatorLoader.php',
         'Helper/Dsn/Dsn.php',
         'Cache/ResultCacheOptions.php',
+        'Storage/DTO',
     ];
 
     $services->load('Mautic\\CoreBundle\\', '../')
