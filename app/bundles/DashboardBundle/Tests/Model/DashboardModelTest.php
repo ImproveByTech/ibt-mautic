@@ -16,6 +16,10 @@ use Mautic\DashboardBundle\Entity\Widget;
 use Mautic\DashboardBundle\Event\WidgetDetailEvent;
 use Mautic\DashboardBundle\Factory\WidgetDetailEventFactory;
 use Mautic\DashboardBundle\Model\DashboardModel;
+use Mautic\CoreBundle\Exception\MediaStorageException;
+use Mautic\CoreBundle\Storage\MediaStorage;
+use Mautic\DashboardBundle\Helper\DashboardFileSync;
+use Mautic\UserBundle\Entity\User;
 use PHPUnit\Framework\Assert;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
@@ -136,5 +140,56 @@ final class DashboardModelTest extends TestCase
         $model->populateWidgetContent($widget, ['timezone' => 'UTC']);
 
         Assert::assertSame('mautic.dashboard.widget.load.failed', $widget->getErrorMessage());
+    }
+
+    public function testSaveSnapshotRemovesLocalCopyWhenS3PushFails(): void
+    {
+        $dir = (string) realpath(sys_get_temp_dir()).'/dash-model-'.bin2hex(random_bytes(4));
+        mkdir($dir);
+
+        try {
+            $storage = $this->createMock(MediaStorage::class);
+            $storage->method('isEnabled')->willReturn(true);
+            $storage->method('putFile')->willThrowException(new MediaStorageException('boom'));
+            $paths = $this->createStub(PathsHelper::class);
+            $paths->method('getSystemPath')->willReturn($dir);
+            $user = $this->createStub(User::class);
+            $user->method('getId')->willReturn(7);
+            $userHelper = $this->createStub(UserHelper::class);
+            $userHelper->method('getUser')->willReturn($user);
+            $sync = new DashboardFileSync($storage, $paths, $userHelper, $this->createStub(LoggerInterface::class));
+
+            $model = $this->getMockBuilder(DashboardModel::class)
+                ->setConstructorArgs([
+                    $this->coreParametersHelper,
+                    $paths,
+                    $this->createStub(WidgetDetailEventFactory::class),
+                    new Filesystem(),
+                    $this->createStub(RequestStack::class),
+                    $this->createStub(EntityManagerInterface::class),
+                    $this->createStub(CorePermissions::class),
+                    $this->createStub(EventDispatcherInterface::class),
+                    $this->createStub(UrlGeneratorInterface::class),
+                    $this->createStub(Translator::class),
+                    $userHelper,
+                    $this->createStub(LoggerInterface::class),
+                    $this->createStub(CacheProviderTagAwareInterface::class),
+                    $sync,
+                ])
+                ->onlyMethods(['toArray'])
+                ->getMock();
+            $model->method('toArray')->willReturn(['name' => 'x']);
+
+            try {
+                $model->saveSnapshot('x');
+                $this->fail('Expected IOException');
+            } catch (\Symfony\Component\Filesystem\Exception\IOException) {
+            }
+
+            $this->assertFileDoesNotExist($dir.'/x.json');
+        } finally {
+            array_map('unlink', glob($dir.'/*') ?: []);
+            rmdir($dir);
+        }
     }
 }

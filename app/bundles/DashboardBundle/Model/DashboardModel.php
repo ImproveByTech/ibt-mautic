@@ -134,6 +134,9 @@ class DashboardModel extends FormModel
         try {
             $this->dashboardFileSync?->push($path);
         } catch (MediaStorageException $e) {
+            // Do not leave a local copy that looks saved but never reached S3.
+            @unlink($path);
+
             throw new IOException('Could not store the dashboard in S3: '.$e->getMessage(), 0, $e);
         }
     }

@@ -466,6 +466,8 @@ class DashboardController extends AbstractFormController
                             try {
                                 $fileSync->push($directories['user'].'/'.$fileData->getClientOriginalName());
                             } catch (MediaStorageException $e) {
+                                // Do not leave a local copy that looks imported but never reached S3.
+                                @unlink($directories['user'].'/'.$fileData->getClientOriginalName());
                                 $form->addError(new FormError($e->getMessage()));
                             }
                         } else {
