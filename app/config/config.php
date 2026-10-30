@@ -393,7 +393,7 @@ $container->loadFromExtension('fm_elfinder', [
                             'adapter_service' => 'mautic.core.service.local_file_adapter',
                             'options'         => [],
                         ],
-                        'uploadOverwrite' => false, // auto-rename on name collision instead of replacing (S3 objects may be embedded in sent emails)
+                        'upload_overwrite' => false, // auto-rename on name collision instead of replacing (S3 objects may be embedded in sent emails)
                         'upload_allow'  => ['image/png', 'image/jpg', 'image/jpeg', 'image/gif'],
                         'upload_deny'   => ['all'],
                         'accepted_name' => '/^[\w\x{0300}-\x{036F}][\w\x{0300}-\x{036F}\s\.\%\-]*$/u', // Supports diacritic symbols
