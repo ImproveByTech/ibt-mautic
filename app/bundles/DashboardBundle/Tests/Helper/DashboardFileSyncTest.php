@@ -10,6 +10,7 @@ use Mautic\CoreBundle\Storage\DTO\MediaObject;
 use Mautic\CoreBundle\Storage\MediaStorage;
 use Mautic\DashboardBundle\Helper\DashboardFileSync;
 use Mautic\UserBundle\Entity\User;
+use Mautic\CoreBundle\Exception\MediaStorageException;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
@@ -19,6 +20,8 @@ class DashboardFileSyncTest extends TestCase
     private string $dir;
     private MediaStorage&MockObject $storage;
     private DashboardFileSync $sync;
+    private LoggerInterface&MockObject $logger;
+    private PathsHelper $paths;
 
     protected function setUp(): void
     {
@@ -37,7 +40,9 @@ class DashboardFileSyncTest extends TestCase
         $userHelper = $this->createStub(UserHelper::class);
         $userHelper->method('getUser')->willReturn($user);
 
-        $this->sync = new DashboardFileSync($this->storage, $paths, $userHelper, $this->createStub(LoggerInterface::class));
+        $this->logger = $this->createMock(LoggerInterface::class);
+        $this->paths  = $paths;
+        $this->sync   = new DashboardFileSync($this->storage, $paths, $userHelper, $this->logger);
     }
 
     protected function tearDown(): void
@@ -81,6 +86,67 @@ class DashboardFileSyncTest extends TestCase
     {
         $this->storage->expects($this->once())->method('delete')->with('media/dashboards/7/gone.json');
         $this->sync->remove($this->dir.'/gone.json');
+    }
+
+    public function testPullSkipsKeysWithSlash(): void
+    {
+        $this->storage->method('listObjects')->willReturn([
+            new MediaObject('media/dashboards/7/sub/x.json', 'u', 1, new \DateTimeImmutable()),
+        ]);
+        $this->storage->expects($this->never())->method('downloadTo');
+        $this->sync->pull();
+    }
+
+    public function testPushPropagatesException(): void
+    {
+        file_put_contents($this->dir.'/my.json', '{}');
+        $this->storage->method('putFile')->willThrowException(new MediaStorageException('boom'));
+        $this->expectException(MediaStorageException::class);
+        $this->sync->push($this->dir.'/my.json');
+    }
+
+    public function testRemoveRefusesBadPath(): void
+    {
+        $this->storage->expects($this->never())->method('delete');
+        $this->assertFalse($this->sync->remove('/etc/passwd'));
+        $this->assertFalse($this->sync->remove($this->dir.'/a.txt'));
+    }
+
+    public function testRemoveSwallowsAndLogsException(): void
+    {
+        $this->storage->method('delete')->willThrowException(new MediaStorageException('boom'));
+        $this->logger->expects($this->once())->method('error');
+        $this->assertFalse($this->sync->remove($this->dir.'/gone.json'));
+    }
+
+    public function testRemoveReturnsTrueOnSuccess(): void
+    {
+        $this->assertTrue($this->sync->remove($this->dir.'/gone.json'));
+    }
+
+    public function testPullSwallowsListException(): void
+    {
+        $this->storage->method('listObjects')->willThrowException(new MediaStorageException('boom'));
+        $this->logger->expects($this->once())->method('error');
+        $this->sync->pull();
+    }
+
+    public function testPullSwallowsDownloadException(): void
+    {
+        $this->storage->method('listObjects')->willReturn([
+            new MediaObject('media/dashboards/7/new.json', 'u', 1, new \DateTimeImmutable()),
+        ]);
+        $this->storage->method('downloadTo')->willThrowException(new MediaStorageException('boom'));
+        $this->logger->expects($this->once())->method('error');
+        $this->sync->pull();
+    }
+
+    public function testPullNoopWithoutUser(): void
+    {
+        $userHelper = $this->createStub(UserHelper::class);
+        $userHelper->method('getUser')->willReturn(null);
+        $this->storage->expects($this->never())->method('listObjects');
+        (new DashboardFileSync($this->storage, $this->paths, $userHelper, $this->logger))->pull();
     }
 
     public function testNoopWhenDisabled(): void

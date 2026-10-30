@@ -374,7 +374,9 @@ class DashboardController extends AbstractFormController
         if (file_exists($path) && is_writable($path)) {
             unlink($path);
             if ('user' === $type) {
-                $fileSync->remove($path);
+                if (!$fileSync->remove($path)) {
+                    $this->addFlashMessage('mautic.dashboard.warning.s3_delete_failed', [], 'warning', 'flashes');
+                }
             }
         }
 

@@ -41,8 +41,11 @@ final class DashboardFileSync
 
             $prefix = $this->prefix($userId);
             foreach ($this->storage->listObjects($prefix) as $object) {
+                if (!str_starts_with($object->key, $prefix)) {
+                    continue;
+                }
                 $name = substr($object->key, strlen($prefix));
-                if (!str_starts_with($object->key, $prefix) || !$this->isValidName($name)) {
+                if (!$this->isValidName($name)) {
                     continue;
                 }
                 if (file_exists($dir.'/'.$name)) {
@@ -75,12 +78,12 @@ final class DashboardFileSync
     }
 
     /**
-     * Never throws: the local delete has already happened.
+     * Never throws: the local delete has already happened. Returns false on a logged failure.
      */
-    public function remove(string $absolutePath): void
+    public function remove(string $absolutePath): bool
     {
         if (!$this->storage->isEnabled()) {
-            return;
+            return true;
         }
 
         try {
@@ -88,11 +91,15 @@ final class DashboardFileSync
             if (null === $key) {
                 $this->mauticLogger->warning('Refusing to delete dashboard file from S3: '.$absolutePath);
 
-                return;
+                return false;
             }
             $this->storage->delete($key);
+
+            return true;
         } catch (\Throwable $e) {
             $this->mauticLogger->error('Could not delete dashboard from S3: '.$e->getMessage());
+
+            return false;
         }
     }
 

@@ -150,8 +150,8 @@ next boot. Public URL of an object:
   access to buckets and objects granted through *new* public bucket or
   access point policies" (and the "any" variant) must be OFF so the policy
   below can take effect. No object ACLs are used.
-- **Bucket policy** (public read of `media/` only; `database/` and anything
-  else stays private). Replace `mautic-selfhosted`:
+- **Bucket policy** (public read of `media/files/` and `media/images/` only;
+  `database/`, `media/dashboards/` and anything else stays private). Replace `mautic-selfhosted`:
 ```json
 {
   "Version": "2012-10-17",
@@ -161,11 +161,16 @@ next boot. Public URL of an object:
       "Effect": "Allow",
       "Principal": "*",
       "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::mautic-selfhosted/*/media/*"
+      "Resource": [
+        "arn:aws:s3:::mautic-selfhosted/*/media/files/*",
+        "arn:aws:s3:::mautic-selfhosted/*/media/images/*"
+      ]
     }
   ]
 }
 ```
+`media/dashboards/` stays private on purpose: Mautic reads those files with
+  its own IAM credentials, and they don't need public links.
 - **IAM user** needs `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` on
   `arn:aws:s3:::<bucket>/<root>/*` and `s3:ListBucket` on
   `arn:aws:s3:::<bucket>` (optionally limited with an `s3:prefix`
