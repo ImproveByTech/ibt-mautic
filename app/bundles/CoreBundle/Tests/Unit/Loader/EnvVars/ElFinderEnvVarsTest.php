@@ -42,6 +42,7 @@ final class ElFinderEnvVarsTest extends TestCase
         ElFinderEnvVars::load($this->config, $this->defaultConfig, $this->envVars);
         $this->assertStringEndsWith('images', $this->envVars->get('MAUTIC_EL_FINDER_PATH'));
         $this->assertEquals('https://foo.bar/test/images', $this->envVars->get('MAUTIC_EL_FINDER_URL'));
+        $this->assertSame('https://foo.bar/test/images/.tmb', $this->envVars->get('MAUTIC_EL_FINDER_TMB_URL'));
     }
 
     public function testTrailingSlashHandled(): void
@@ -72,6 +73,7 @@ final class ElFinderEnvVarsTest extends TestCase
         ElFinderEnvVars::load($this->config, $this->defaultConfig, $this->envVars);
 
         $this->assertSame('https://bkt.s3.us-east-1.amazonaws.com/my%20root/media/images', $this->envVars->get('MAUTIC_EL_FINDER_URL'));
+        $this->assertSame('https://foo.bar/test/images/.tmb', $this->envVars->get('MAUTIC_EL_FINDER_TMB_URL'));
         $this->assertStringEndsWith('images', $this->envVars->get('MAUTIC_EL_FINDER_PATH'));
     }
 

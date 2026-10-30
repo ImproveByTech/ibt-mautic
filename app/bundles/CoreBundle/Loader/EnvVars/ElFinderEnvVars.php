@@ -16,6 +16,9 @@ class ElFinderEnvVars implements EnvVarsInterface
 
         $url = rtrim((string) $config->get('site_url'), '/').'/'.$relativeImageFolderPath;
 
+        // Thumbnails are generated on local disk, so their URL stays on the site in both modes.
+        $envVars->set('MAUTIC_EL_FINDER_TMB_URL', $url.'/.tmb');
+
         $s3 = [];
         foreach (['s3_bucket', 's3_region', 's3_access_key_id', 's3_secret_access_key', 's3_root_directory'] as $name) {
             $s3[$name] = trim((string) $config->get($name, ''));
