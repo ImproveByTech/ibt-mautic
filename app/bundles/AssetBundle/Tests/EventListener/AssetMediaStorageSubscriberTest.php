@@ -74,6 +74,7 @@ final class AssetMediaStorageSubscriberTest extends TestCase
     {
         $this->assertSame([
             AssetEvents::ASSET_PRE_SAVE    => ['onAssetPreSave', 0],
+            AssetEvents::ASSET_POST_SAVE   => ['onAssetPostSave', 0],
             AssetEvents::ASSET_POST_DELETE => ['onAssetPostDelete', 0],
         ], AssetMediaStorageSubscriber::getSubscribedEvents());
     }
@@ -146,6 +147,8 @@ final class AssetMediaStorageSubscriberTest extends TestCase
         });
 
         $this->subscriber->onAssetPreSave(new AssetEvent($asset, false));
+        $this->assertSame(['put:media/files/new.pdf'], $calls);
+        $this->subscriber->onAssetPostSave(new AssetEvent($asset, false));
 
         $this->assertSame(['put:media/files/new.pdf', 'delete:media/files/old.pdf'], $calls);
     }
@@ -230,6 +233,7 @@ final class AssetMediaStorageSubscriberTest extends TestCase
         $this->storage->expects($this->never())->method('delete');
 
         $this->subscriber->onAssetPreSave(new AssetEvent($asset, false));
+        $this->subscriber->onAssetPostSave(new AssetEvent($asset, false));
     }
 
     public function testLocalFileKeptWhenAnotherLocalAssetUsesIt(): void
@@ -254,6 +258,7 @@ final class AssetMediaStorageSubscriberTest extends TestCase
         $this->logger->expects($this->once())->method('error');
 
         $this->subscriber->onAssetPreSave(new AssetEvent($asset, false));
+        $this->subscriber->onAssetPostSave(new AssetEvent($asset, false));
 
         $this->assertSame('remote', $asset->getStorageLocation());
     }
@@ -282,6 +287,7 @@ final class AssetMediaStorageSubscriberTest extends TestCase
         $this->storage->expects($this->once())->method('delete')->with('media/files/old.pdf');
 
         $this->subscriber->onAssetPreSave(new AssetEvent($asset, false));
+        $this->subscriber->onAssetPostSave(new AssetEvent($asset, false));
 
         $this->assertSame('https://cdn.example.com/root/media/files/new.pdf', $asset->getRemotePath());
         $this->assertFileDoesNotExist($this->dir.'/new.pdf');
@@ -365,6 +371,7 @@ final class AssetMediaStorageSubscriberTest extends TestCase
         $this->storage->expects($this->never())->method('delete');
 
         $this->subscriber->onAssetPreSave(new AssetEvent($asset, false));
+        $this->subscriber->onAssetPostSave(new AssetEvent($asset, false));
     }
 
     public function testOursRemotePathIsCanonicalizedEvenWhenLocal(): void
@@ -377,5 +384,67 @@ final class AssetMediaStorageSubscriberTest extends TestCase
         $this->subscriber->onAssetPreSave(new AssetEvent($asset, false));
 
         $this->assertSame('https://cdn.example.com/root/media/files/a.pdf', $asset->getRemotePath());
+    }
+
+    public function testOldObjectIsDeletedOnlyOnPostSaveAndNotWhenPostSaveNeverFires(): void
+    {
+        $asset = $this->localAsset('new.pdf');
+        $asset->setRemotePath('https://cdn.example.com/root/media/files/old.pdf');
+        $this->storage->method('putFile')->willReturn('https://cdn.example.com/root/media/files/new.pdf');
+        $this->storage->method('keyFromPublicUrl')->willReturnCallback(fn (string $u): ?string => str_contains($u, 'old.pdf') ? 'media/files/old.pdf' : 'media/files/new.pdf');
+        $this->storage->expects($this->once())->method('delete')->with('media/files/old.pdf');
+
+        $this->subscriber->onAssetPreSave(new AssetEvent($asset, false));
+        $this->subscriber->onAssetPostSave(new AssetEvent($asset, false));
+        // A second post-save has nothing left to delete.
+        $this->subscriber->onAssetPostSave(new AssetEvent($asset, false));
+    }
+
+    public function testNoDeleteWhenPostSaveNeverFires(): void
+    {
+        $asset = $this->localAsset('new.pdf');
+        $asset->setRemotePath('https://cdn.example.com/root/media/files/old.pdf');
+        $this->storage->method('putFile')->willReturn('https://cdn.example.com/root/media/files/new.pdf');
+        $this->storage->method('keyFromPublicUrl')->willReturnCallback(fn (string $u): ?string => str_contains($u, 'old.pdf') ? 'media/files/old.pdf' : 'media/files/new.pdf');
+        $this->storage->expects($this->never())->method('delete');
+
+        $this->subscriber->onAssetPreSave(new AssetEvent($asset, false));
+    }
+
+    public function testFormSubmissionObjectIsNeverDeletedOnPostDelete(): void
+    {
+        $url = 'https://cdn.example.com/root/media/files/form/1/2/x.pdf';
+        $this->storage->method('keyFromPublicUrl')->willReturn('media/files/form/1/2/x.pdf');
+        $this->storage->expects($this->never())->method('delete');
+        $asset = new Asset();
+        $asset->setStorageLocation('remote');
+        $asset->setRemotePath($url);
+
+        $this->subscriber->onAssetPostDelete(new AssetEvent($asset, false));
+    }
+
+    public function testFormSubmissionObjectIsNeverDeletedOnReplace(): void
+    {
+        $asset = $this->localAsset('new.pdf');
+        $asset->setRemotePath('https://cdn.example.com/root/media/files/form/1/2/x.pdf');
+        $this->storage->method('putFile')->willReturn('https://cdn.example.com/root/media/files/new.pdf');
+        $this->storage->method('keyFromPublicUrl')->willReturnCallback(fn (string $u): ?string => str_contains($u, 'form/1/2') ? 'media/files/form/1/2/x.pdf' : 'media/files/new.pdf');
+        $this->storage->expects($this->never())->method('delete');
+
+        $this->subscriber->onAssetPreSave(new AssetEvent($asset, false));
+        $this->subscriber->onAssetPostSave(new AssetEvent($asset, false));
+    }
+
+    public function testFormSubmissionObjectIsNotCanonicalizedAsOwned(): void
+    {
+        $this->storage->method('keyFromPublicUrl')->willReturn('media/files/form/1/2/x.pdf');
+        $this->storage->expects($this->never())->method('getPublicUrl');
+        $asset = new Asset();
+        $asset->setStorageLocation('remote');
+        $asset->setRemotePath('https://cdn.example.com/root/media/files/form/1/2/x.pdf?x=1');
+
+        $this->subscriber->onAssetPreSave(new AssetEvent($asset, false));
+
+        $this->assertSame('https://cdn.example.com/root/media/files/form/1/2/x.pdf?x=1', $asset->getRemotePath());
     }
 }

@@ -19,6 +19,18 @@ use Symfony\Component\EventDispatcher\EventSubscriberInterface;
  */
 class AssetMediaStorageSubscriber implements EventSubscriberInterface
 {
+    /**
+     * Asset keys are always flat: media/files/<hash>.<ext>. Anything nested (e.g. form submissions) is not an asset.
+     */
+    private const OWNED_KEY_PATTERN = '#^media/files/[^/]+$#';
+
+    /**
+     * Old objects to delete once the asset row has been flushed, keyed by spl_object_id of the asset.
+     *
+     * @var array<int, array{url: string, id: int|null}>
+     */
+    private array $pendingDeletes = [];
+
     public function __construct(
         private MediaStorage $mediaStorage,
         private CoreParametersHelper $coreParametersHelper,
@@ -31,6 +43,7 @@ class AssetMediaStorageSubscriber implements EventSubscriberInterface
     {
         return [
             AssetEvents::ASSET_PRE_SAVE    => ['onAssetPreSave', 0],
+            AssetEvents::ASSET_POST_SAVE   => ['onAssetPostSave', 0],
             AssetEvents::ASSET_POST_DELETE => ['onAssetPostDelete', 0],
         ];
     }
@@ -74,8 +87,27 @@ class AssetMediaStorageSubscriber implements EventSubscriberInterface
         }
 
         if (null !== $old && $this->mediaStorage->keyFromPublicUrl($old) !== $this->mediaStorage->keyFromPublicUrl($url)) {
-            $this->deleteOwnObject($old, $asset->getId());
+            // Deleted in onAssetPostSave, once the row no longer points at it.
+            $this->pendingDeletes[spl_object_id($asset)] = ['url' => $old, 'id' => $asset->getId()];
         }
+    }
+
+    public function onAssetPostSave(AssetEvent $event): void
+    {
+        $asset    = $event->getAsset();
+        $objectId = spl_object_id($asset);
+        if (!isset($this->pendingDeletes[$objectId])) {
+            return;
+        }
+
+        $pending = $this->pendingDeletes[$objectId];
+        unset($this->pendingDeletes[$objectId]);
+
+        if (!$this->mediaStorage->isEnabled()) {
+            return;
+        }
+
+        $this->deleteOwnObject($pending['url'], $pending['id']);
     }
 
     public function onAssetPostDelete(AssetEvent $event): void
@@ -104,7 +136,7 @@ class AssetMediaStorageSubscriber implements EventSubscriberInterface
         }
 
         $key = $this->mediaStorage->keyFromPublicUrl($remotePath);
-        if (null === $key) {
+        if (null === $key || 1 !== preg_match(self::OWNED_KEY_PATTERN, $key)) {
             return;
         }
 
@@ -164,14 +196,14 @@ class AssetMediaStorageSubscriber implements EventSubscriberInterface
     }
 
     /**
-     * Delete an object only if it is ours, under media/files/ and no other asset still uses it.
+     * Delete an object only if it is ours, a flat media/files/<name> key and no other asset still uses it.
      * Failures are logged: a leaked object is harmless, a failed save/delete is not.
      */
     private function deleteOwnObject(string $url, ?int $excludeId): void
     {
         try {
             $key = $this->mediaStorage->keyFromPublicUrl($url);
-            if (null === $key || !str_starts_with($key, MediaStorage::FILES_PREFIX)) {
+            if (null === $key || 1 !== preg_match(self::OWNED_KEY_PATTERN, $key)) {
                 return;
             }
 
