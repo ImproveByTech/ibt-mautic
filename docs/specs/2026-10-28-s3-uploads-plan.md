@@ -40,7 +40,7 @@
 - Modify: `app/bundles/CoreBundle/Config/config.php` `parameters` (defaults `''` for the 5 keys).
 - Create: `app/bundles/CoreBundle/Storage/MediaStorage.php` (autowired by the existing `services.php` `load()`), `app/bundles/CoreBundle/Storage/DTO/MediaObject.php` and `app/bundles/CoreBundle/Exception/MediaStorageException.php`. These two must sit in `DTO/` and `Exception/`, which `MauticCoreExtension::DEFAULT_EXCLUDES` skips. Otherwise the public autowiring tries to build `MediaObject` as a service and the container fails to compile.
 - Test: `app/bundles/CoreBundle/Tests/Unit/Storage/MediaStorageTest.php`
-- Docs: `docs/project/DEPLOYMENT.md`. Add the env vars (set on web, cron **and** worker), the bucket policy JSON (public `s3:GetObject` on `arn:aws:s3:::<bucket>/*/media/*`), the "Block Public Access must allow bucket policies" note, the IAM actions (`s3:PutObject`, `s3:GetObject`, `s3:DeleteObject`, `s3:ListBucket`), and the fact that the feature only covers uploads made after it's on.
+- Docs: `docs/project/DEPLOYMENT.md`. Add the env vars (set on web, cron **and** worker), the bucket policy JSON (public `s3:GetObject` on `arn:aws:s3:::<bucket>/*/media/files/*` and `arn:aws:s3:::<bucket>/*/media/images/*` only; `media/dashboards/` stays private), the "Block Public Access must allow bucket policies" note, the IAM actions (`s3:PutObject`, `s3:GetObject`, `s3:DeleteObject`, `s3:ListBucket`), and the fact that the feature only covers uploads made after it's on.
 
 **Interfaces (Produces):**
 ```php

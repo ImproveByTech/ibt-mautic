@@ -5,6 +5,56 @@ setup and the few code patches it carries on top of upstream. Newest at
 the top. Link back here from commit messages when a
 decision changes.
 
+## User uploads live in S3 (`MediaStorage`)
+
+Spec: `docs/specs/2026-10-28-s3-uploads.md`. Setup: `DEPLOYMENT.md`. Goal:
+the VPS is disposable - every upload goes to the bucket and the DB keeps
+the URL, so a new server only needs the same DB + env vars.
+
+- **Per-client prefix in a shared bucket** (`S3_ROOT_DIRECTORY`), not a
+  bucket per client.
+- **Off unless all five vars are set** (`S3_BUCKET`, `S3_REGION`,
+  `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_ROOT_DIRECTORY`):
+  `MediaStorage::isEnabled()`. Otherwise upstream behavior; tests and ddev
+  need no S3. Set on web, cron and worker.
+- **Public-read only `media/files/*` and `media/images/*`** (bucket
+  policy, no object ACLs). `media/dashboards/` stays private and is read
+  with the IAM credentials. Form uploads are public too (user's decision,
+  LGPD exposure accepted).
+- **Assets are pushed on save** and stored as `storageLocation=remote`
+  with the canonical S3 URL. Downloads are still tracked by
+  `PublicController`, then redirected. Editing such an asset shows
+  "Remote" + URL in the form.
+- **Admin preview of a remote asset redirects** instead of fetching
+  server-side (SSRF / `file://` read); `Asset::getFileContents()` stays
+  upstream.
+- **Random 16-hex name prefix** for form uploads and builder images: an S3
+  key must never be shared by two uploads (client file names are not unique
+  once local dirs are emptied; same-key overwrite would change sent
+  emails). Dashboards keep readable, user-scoped names (same-user overwrite
+  is upstream's behavior).
+- **elFinder `upload_overwrite=false`** (auto-rename), also in local mode.
+  elFinder uses a small custom Flysystem adapter over `MediaStorage`
+  (scoped to `media/images/`) instead of `league/flysystem-aws-s3-v3`:
+  Composer was unavailable when this was built and hand-editing
+  `composer.lock` was risky. It can be swapped for the official adapter
+  later.
+- **Content-type hardening** in `MediaStorage`: inline only
+  png/jpeg/gif/webp/pdf; svg keeps its type but is `attachment`;
+  html/xml/js become `application/octet-stream` + `attachment`; anything
+  else is `attachment`. Anonymous visitors can upload via forms, so the
+  public bucket must never serve active content inline.
+- **Avatars are content-checked** with `getimagesize()` (also with S3 off:
+  local avatars live on Mautic's own origin, so an HTML body there is a
+  worse XSS vector).
+- **Deletes**: only under our `<root>/media/` prefix (`keyFromPublicUrl`
+  is the "is this ours?" check; user-typed remote URLs are never touched)
+  and only when no other asset shares the key. S3 failures after an
+  irreversible DB delete are logged, not thrown. A failed S3 write always
+  surfaces as an error - never a "successful" upload left on local disk.
+- **No migration**: files uploaded before the feature was on keep working
+  on that server but are not copied to S3 (and not carried to a new VPS).
+
 ## Remote assets forward the click's campaign query params (core patch)
 
 `AssetBundle\Controller\PublicController::remoteRedirectResponse()` used to

@@ -429,7 +429,11 @@ an existing bucket and link to a file already there. Mautic never uploads
 anything to S3; assets saved with "Storage location: Local" always go to
 the local `media/files` volume.
 
-**How to use it:** upload the file to the bucket yourself (AWS console /
+**To get uploads into the bucket automatically**, use this fork's S3
+media storage instead: set the `S3_*` env vars (see `DEPLOYMENT.md`,
+"S3 media storage", and `DECISIONS.md`). That is independent of this plugin.
+
+**How to use the plugin:** upload the file to the bucket yourself (AWS console /
 `aws s3 cp`), then in Components > Assets > New pick **Storage location:
 Remote**, click the Amazon S3 browse button and select the file. Mautic
 stores the object's public URL, so that object must be publicly readable
@@ -439,3 +443,16 @@ stores the object's public URL, so that object must be publicly readable
 which holds `database/` dumps) and make it public - use a separate bucket,
 or a bucket policy that grants public `s3:GetObject` only on a dedicated
 prefix (e.g. `assets/*`).
+
+## Uploads still go to local disk after setting the `S3_*` env vars
+
+S3 media storage is on only when **all five** vars are non-empty:
+`S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`,
+`S3_ROOT_DIRECTORY`. If any is missing or empty, Mautic silently behaves
+like upstream (local disk).
+
+**Check:** the vars must be set on **all three apps** (web, cron, worker),
+and `config/local.php` is rendered from env at container boot
+(`docker/render-local-config.php`), so changing env vars requires a
+**redeploy**. Verify with `grep s3_ config/local.php` inside the container.
+Only uploads made after the feature is on go to S3; older files stay local.

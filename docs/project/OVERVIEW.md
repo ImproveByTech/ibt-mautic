@@ -54,6 +54,12 @@ duplicating detail here.
    `CoreBundle\Form\Extension\DefaultTranslationLanguageExtension`. See
    `docs/project/DECISIONS.md`; upstreamable as a PR.
 
+6. **User uploads live in S3 when `S3_*` is set**: assets, builder
+   images, contact avatars, form files and dashboards go to the bucket
+   instead of the VPS disk; off (plain upstream behavior) unless all five
+   vars are set. See `docs/project/DEPLOYMENT.md` and
+   `docs/project/DECISIONS.md`.
+
 ## Platform requirements (non-negotiable)
 
 - MySQL **8.4.0+** or MariaDB **10.11.0+** — 8.0 is rejected by the installer.
