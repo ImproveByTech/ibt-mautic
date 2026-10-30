@@ -228,4 +228,49 @@ final class AvatarHelperTest extends TestCase
         // The Packages stub yields an empty URL; what matters is that S3 was not consulted.
         $this->assertSame('', $this->helper()->getAvatar($this->lead(42, new \DateTime('@1700000000'))));
     }
+
+    public function testStaleLocalAvatarIsRemovedAfterS3Upload(): void
+    {
+        mkdir($this->tmpDir.'/lead_avatars');
+        $local = $this->tmpDir.'/lead_avatars/avatar42';
+        file_put_contents($local, 'old');
+        $path = $this->tmpDir.'/upload.png';
+        file_put_contents($path, self::PNG());
+        $file = new UploadedFile($path, 'upload.png', null, null, true);
+
+        $this->mediaStorage->method('isEnabled')->willReturn(true);
+        $this->mediaStorage->method('putFile')->willReturn('https://x/y');
+        $this->mediaStorage->method('getPublicUrl')->willReturn('https://x/media/images/lead_avatars/avatar42');
+
+        $helper = $this->helper();
+        $helper->storeUploadedAvatar($this->lead(), $file);
+
+        $this->assertFileDoesNotExist($local);
+        $this->assertStringStartsWith('https://x/media/images/lead_avatars/avatar42', (string) $helper->getAvatar($this->lead()));
+
+        file_put_contents($local, 'old');
+        $helper->createAvatarFromFile($this->lead(), $path);
+        $this->assertFileDoesNotExist($local);
+    }
+
+    public function testStaleLocalAvatarIsKeptWhenS3UploadFails(): void
+    {
+        mkdir($this->tmpDir.'/lead_avatars');
+        $local = $this->tmpDir.'/lead_avatars/avatar42';
+        file_put_contents($local, 'old');
+        $path = $this->tmpDir.'/upload.png';
+        file_put_contents($path, self::PNG());
+        $file = new UploadedFile($path, 'upload.png', null, null, true);
+
+        $this->mediaStorage->method('isEnabled')->willReturn(true);
+        $this->mediaStorage->method('putFile')->willThrowException(new MediaStorageException('boom'));
+
+        try {
+            $this->helper()->storeUploadedAvatar($this->lead(), $file);
+            $this->fail('Expected exception');
+        } catch (MediaStorageException) {
+        }
+
+        $this->assertFileExists($local);
+    }
 }

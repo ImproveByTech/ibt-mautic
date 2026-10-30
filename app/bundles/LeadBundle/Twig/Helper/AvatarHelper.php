@@ -43,6 +43,7 @@ final class AvatarHelper
 
         if ($this->mediaStorage->isEnabled()) {
             $this->mediaStorage->putFile(self::avatarKey($lead), $file->getPathname());
+            $this->removeStaleLocalAvatar($lead);
 
             return;
         }
@@ -76,6 +77,7 @@ final class AvatarHelper
 
         if ($this->mediaStorage->isEnabled()) {
             $this->mediaStorage->putFile(self::avatarKey($lead), $filePath);
+            $this->removeStaleLocalAvatar($lead);
 
             return;
         }
@@ -88,6 +90,17 @@ final class AvatarHelper
 
         $fs = new Filesystem();
         $fs->copy($filePath, $avatarDir.DIRECTORY_SEPARATOR.'avatar'.$lead->getId(), true);
+    }
+
+    /**
+     * A pre-feature local avatar would otherwise keep shadowing the new S3 one in getAvatar().
+     */
+    private function removeStaleLocalAvatar(Lead $lead): void
+    {
+        $local = $this->getAvatarPath(true).'/avatar'.(int) $lead->getId();
+        if (is_file($local)) {
+            @unlink($local);
+        }
     }
 
     /**
