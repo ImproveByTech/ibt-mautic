@@ -36,6 +36,7 @@ return function (ContainerConfigurator $configurator): void {
         'Helper/Dsn/Dsn.php',
         'Cache/ResultCacheOptions.php',
         'Storage/DTO',
+        'Service/LocalFileAdapterService.php',
     ];
 
     $services->load('Mautic\\CoreBundle\\', '../')

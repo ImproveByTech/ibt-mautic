@@ -162,8 +162,10 @@ return [
                 ],
             ],
             'mautic.core.service.local_file_adapter' => [
-                'class'     => Mautic\CoreBundle\Service\LocalFileAdapterService::class,
+                'class'     => League\Flysystem\FilesystemAdapter::class,
+                'factory'   => [Mautic\CoreBundle\Service\ElFinderAdapterFactory::class, 'create'],
                 'arguments' => [
+                    'mautic.storage.media',
                     '%env(resolve:MAUTIC_EL_FINDER_PATH)%',
                 ],
             ],

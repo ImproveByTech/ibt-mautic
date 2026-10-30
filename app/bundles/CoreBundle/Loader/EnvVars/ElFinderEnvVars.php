@@ -15,6 +15,17 @@ class ElFinderEnvVars implements EnvVarsInterface
         $envVars->set('MAUTIC_EL_FINDER_PATH', $absoluteImageFolderPath);
 
         $url = rtrim((string) $config->get('site_url'), '/').'/'.$relativeImageFolderPath;
+
+        $s3 = [];
+        foreach (['s3_bucket', 's3_region', 's3_access_key_id', 's3_secret_access_key', 's3_root_directory'] as $name) {
+            $s3[$name] = trim((string) $config->get($name, ''));
+        }
+        if (!in_array('', $s3, true)) {
+            // Must equal MediaStorage::getRootUrl().'media/images'
+            $s3Root = implode('/', array_map('rawurlencode', explode('/', trim($s3['s3_root_directory'], " \t/"))));
+            $url    = sprintf('https://%s.s3.%s.amazonaws.com/%s/media/images', $s3['s3_bucket'], $s3['s3_region'], $s3Root);
+        }
+
         $envVars->set('MAUTIC_EL_FINDER_URL', $url);
     }
 }
