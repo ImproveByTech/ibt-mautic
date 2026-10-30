@@ -39,6 +39,15 @@ the URL, so a new server only needs the same DB + env vars.
   Composer was unavailable when this was built and hand-editing
   `composer.lock` was risky. It can be swapped for the official adapter
   later.
+- **elFinder thumbnails stay on the site**: `tmb_path` is local disk, so
+  `tmb_url` uses its own env var `MAUTIC_EL_FINDER_TMB_URL` (always
+  `<site_url>/<image_path>/.tmb`), not the S3 `MAUTIC_EL_FINDER_URL`.
+- **`lead_avatars/` is hidden and locked in elFinder** (root `attributes`
+  rule, also in local mode): deleting that folder would otherwise
+  `deletePrefix` every contact avatar.
+- **Asset objects are flat keys** (`media/files/<name>`); an asset can never
+  delete or canonicalize a form-submission object, and the old object of a
+  replaced file is deleted in `ASSET_POST_SAVE`, not before the flush.
 - **Content-type hardening** in `MediaStorage`: inline only
   png/jpeg/gif/webp/pdf; svg keeps its type but is `attachment`;
   html/xml/js become `application/octet-stream` + `attachment`; anything
