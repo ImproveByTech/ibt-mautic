@@ -229,7 +229,7 @@ class FileManagerTest extends TestCase
         $this->mediaStorage->method('isEnabled')->willReturn(true);
         $this->mediaStorage->expects($this->never())->method('delete');
 
-        foreach (['', '.', '..', '/',"a\0b"] as $name) {
+        foreach (['', '.', '..', '/', "a\0b"] as $name) {
             try {
                 $this->manager()->deleteFile($name);
                 $this->fail('Expected exception for '.json_encode($name));

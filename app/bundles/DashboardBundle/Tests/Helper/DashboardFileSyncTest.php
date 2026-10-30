@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 namespace Mautic\DashboardBundle\Tests\Helper;
 
+use Mautic\CoreBundle\Exception\MediaStorageException;
 use Mautic\CoreBundle\Helper\PathsHelper;
 use Mautic\CoreBundle\Helper\UserHelper;
 use Mautic\CoreBundle\Storage\DTO\MediaObject;
 use Mautic\CoreBundle\Storage\MediaStorage;
 use Mautic\DashboardBundle\Helper\DashboardFileSync;
 use Mautic\UserBundle\Entity\User;
-use Mautic\CoreBundle\Exception\MediaStorageException;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
