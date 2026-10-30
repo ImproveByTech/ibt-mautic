@@ -47,6 +47,7 @@ use Mautic\LeadBundle\Model\ListModel;
 use Mautic\LeadBundle\Model\NoteModel;
 use Mautic\LeadBundle\Services\ContactColumnsDictionary;
 use Mautic\LeadBundle\Twig\Helper\AvatarHelper;
+use Psr\Log\LoggerInterface;
 use Mautic\PluginBundle\Entity\IntegrationEntity;
 use Mautic\PluginBundle\Helper\IntegrationHelper;
 use Mautic\PointBundle\Model\PointGroupModel;
@@ -486,7 +487,7 @@ class LeadController extends FormController
      *
      * @return \Symfony\Component\HttpFoundation\RedirectResponse|Response
      */
-    public function newAction(Request $request, UserHelper $userHelper, AvatarHelper $avatarHelper, TokenStorageInterface $tokenStorage)
+    public function newAction(Request $request, UserHelper $userHelper, AvatarHelper $avatarHelper, TokenStorageInterface $tokenStorage, ?LoggerInterface $logger = null)
     {
         /** @var LeadModel $model */
         $model = $this->getModel('lead.lead');
@@ -560,6 +561,7 @@ class LeadController extends FormController
                             try {
                                 $this->uploadAvatar($request, $avatarHelper, $lead);
                             } catch (\Exception $e) {
+                                $logger?->error('Contact avatar upload failed: '.$e->getMessage(), ['exception' => $e]);
                                 $this->addFlashMessage('mautic.lead.avatar.upload_failed', [], 'error');
                             }
                         }
@@ -596,7 +598,7 @@ class LeadController extends FormController
                         $returnUrl = $this->generateUrl('mautic_contact_action', $viewParameters);
                         $template  = 'Mautic\LeadBundle\Controller\LeadController::viewAction';
                     } else {
-                        return $this->editAction($request, $userHelper, $avatarHelper, $lead->getId(), true);
+                        return $this->editAction($request, $userHelper, $avatarHelper, $lead->getId(), true, $logger);
                     }
                 } else {
                     if ($request->get('qf', false)) {
@@ -665,7 +667,7 @@ class LeadController extends FormController
      *
      * @return array|JsonResponse|\Symfony\Component\HttpFoundation\RedirectResponse|Response
      */
-    public function editAction(Request $request, UserHelper $userHelper, AvatarHelper $avatarHelper, $objectId, $ignorePost = false)
+    public function editAction(Request $request, UserHelper $userHelper, AvatarHelper $avatarHelper, $objectId, $ignorePost = false, ?LoggerInterface $logger = null)
     {
         /** @var LeadModel $model */
         $model = $this->getModel('lead.lead');
@@ -765,6 +767,7 @@ class LeadController extends FormController
                             try {
                                 $this->uploadAvatar($request, $avatarHelper, $lead);
                             } catch (\Exception $e) {
+                                $logger?->error('Contact avatar upload failed: '.$e->getMessage(), ['exception' => $e]);
                                 $this->addFlashMessage('mautic.lead.avatar.upload_failed', [], 'error');
                             }
 
