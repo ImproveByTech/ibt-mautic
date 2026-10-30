@@ -190,7 +190,7 @@ class ResultController extends CommonFormController
         );
     }
 
-    public function downloadFileAction(int $submissionId, string $field, FormUploader $formUploader): BinaryFileResponse
+    public function downloadFileAction(int $submissionId, string $field, FormUploader $formUploader): Response
     {
         /** @var SubmissionResultLoader $submissionResultLoader */
         $submissionResultLoader = $this->getModel('form.submission_result_loader');
