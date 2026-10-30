@@ -136,6 +136,28 @@ class MediaStorageFlysystemAdapterTest extends TestCase
         $this->assertSame(['sub/b.png', 'sub/deep'], $paths);
     }
 
+    public function testListContentsSkipsFolderMarkers(): void
+    {
+        $this->storage->method('listObjects')->willReturn([
+            $this->object('media/images/sub/'),
+            $this->object('media/images/sub/b.png'),
+        ]);
+
+        $shallow = array_map(fn ($i) => $i->path(), iterator_to_array($this->adapter->listContents('', false), false));
+        $deep    = array_map(fn ($i) => $i->path(), iterator_to_array($this->adapter->listContents('', true), false));
+        $this->assertSame(['sub'], $shallow);
+        $this->assertSame(['sub', 'sub/b.png'], $deep);
+
+        $inSub = array_map(fn ($i) => $i->path(), iterator_to_array($this->adapter->listContents('sub', false), false));
+        $this->assertSame(['sub/b.png'], $inSub);
+    }
+
+    public function testMetadataRejectsBadPathWithFlysystemException(): void
+    {
+        $this->expectException(\League\Flysystem\UnableToRetrieveMetadata::class);
+        $this->adapter->visibility('../x');
+    }
+
     public function testMetadata(): void
     {
         $this->storage->method('listObjects')->with('media/images/a.png')->willReturn([

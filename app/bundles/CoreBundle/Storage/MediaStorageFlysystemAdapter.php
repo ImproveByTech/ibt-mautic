@@ -144,32 +144,35 @@ class MediaStorageFlysystemAdapter implements FilesystemAdapter
 
     public function visibility(string $path): FileAttributes
     {
-        return new FileAttributes($this->normalize($path), null, Visibility::PUBLIC);
+        return new FileAttributes($this->metadataPath($path, 'visibility'), null, Visibility::PUBLIC);
     }
 
     public function mimeType(string $path): FileAttributes
     {
+        $normalized = $this->metadataPath($path, 'mimeType');
         $this->head($path, 'mimeType');
-        $mime   = MimeTypes::getDefault()->getMimeTypes(strtolower(pathinfo($path, PATHINFO_EXTENSION)))[0] ?? null;
+        $mime = MimeTypes::getDefault()->getMimeTypes(strtolower(pathinfo($normalized, PATHINFO_EXTENSION)))[0] ?? null;
         if (null === $mime) {
             throw UnableToRetrieveMetadata::mimeType($path, 'Unknown mime type');
         }
 
-        return new FileAttributes($this->normalize($path), null, null, null, $mime);
+        return new FileAttributes($normalized, null, null, null, $mime);
     }
 
     public function lastModified(string $path): FileAttributes
     {
-        $object = $this->head($path, 'lastModified');
+        $normalized = $this->metadataPath($path, 'lastModified');
+        $object     = $this->head($path, 'lastModified');
 
-        return new FileAttributes($this->normalize($path), null, null, $object->lastModified->getTimestamp());
+        return new FileAttributes($normalized, null, null, $object->lastModified->getTimestamp());
     }
 
     public function fileSize(string $path): FileAttributes
     {
-        $object = $this->head($path, 'fileSize');
+        $normalized = $this->metadataPath($path, 'fileSize');
+        $object     = $this->head($path, 'fileSize');
 
-        return new FileAttributes($this->normalize($path), $object->size);
+        return new FileAttributes($normalized, $object->size);
     }
 
     /**
@@ -191,6 +194,10 @@ class MediaStorageFlysystemAdapter implements FilesystemAdapter
         foreach ($objects as $object) {
             $filePath = substr($object->key, $rootLength);
             $rest     = substr($filePath, strlen($dirPath));
+
+            if ('' === $rest || str_ends_with($filePath, '/')) {
+                continue; // folder marker object
+            }
 
             if ($deep) {
                 $segments = explode('/', $rest);
@@ -253,6 +260,15 @@ class MediaStorageFlysystemAdapter implements FilesystemAdapter
         }
 
         throw UnableToRetrieveMetadata::create($path, $type, $reason);
+    }
+
+    private function metadataPath(string $path, string $type): string
+    {
+        try {
+            return $this->normalize($path);
+        } catch (\InvalidArgumentException $e) {
+            throw UnableToRetrieveMetadata::create($path, $type, $e->getMessage(), $e);
+        }
     }
 
     private function key(string $path): string
