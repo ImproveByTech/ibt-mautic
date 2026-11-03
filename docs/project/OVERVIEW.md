@@ -105,3 +105,7 @@ yet; backups were never automated. Sync jobs with Salesforce run from
 - 2026-11-03: merged `impulsionantedigital/mautic` 7.x (S3 media storage,
   Configuration settings persisting across redeploys, default language for
   new pages/emails, pt_BR translations).
+- 2026-11-03: phase 1 objects set to Lead, Contact, Account (Opportunity
+  and custom objects later).
+  Next: test the native Salesforce plugin against the sandbox, then build
+  Custom Objects. Remaining open questions are parked in the spec.

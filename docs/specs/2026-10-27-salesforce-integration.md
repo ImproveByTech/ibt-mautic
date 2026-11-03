@@ -36,6 +36,11 @@ Salesforce object — only objects explicitly configured.
   per field in the mapping.
 - **Salesforce → Mautic should be near real time** (update Mautic
   whenever a Salesforce object changes).
+- **Phase 1 objects (2026-11-03): Lead, Contact, Account** — profile
+  sync only. Opportunity and custom objects (`__c`, ServiceContract, …)
+  come later, via Custom Objects.
+- **Order of work (2026-11-03):** first test the native plugin against
+  the sandbox (section 1); only then build Custom Objects (section 2).
 - Native `MauticCrmBundle` Salesforce plugin first; gaps go into a
   separate IBT plugin under `plugins/` (no patching `MauticCrmBundle`
   unless unavoidable, and then logged in `docs/project/DECISIONS.md`).
@@ -110,9 +115,11 @@ async messenger, until the messenger delivery issue in
 
 ## Open questions
 
-- Exact list of non-profile objects for phase 1 — is "sale" Opportunity,
-  Order, or a custom object? Which `ServiceContract` fields/statuses
-  matter?
+Parked until after the native-plugin test — ask the user then:
+
+- For the Custom Objects phase: whether Opportunity comes first, which of
+  its fields/stages matter, which custom objects, and which
+  `ServiceContract` fields/statuses.
 - How each object links to the Mautic contact (`ContactId`, `AccountId`,
   lookup on a custom object?) and the matching key between systems
   (Salesforce Id vs email).
