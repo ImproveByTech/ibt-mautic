@@ -51,6 +51,7 @@ use Mautic\PluginBundle\Entity\IntegrationEntity;
 use Mautic\PluginBundle\Helper\IntegrationHelper;
 use Mautic\PointBundle\Model\PointGroupModel;
 use Mautic\UserBundle\Model\UserModel;
+use Psr\Log\LoggerInterface;
 use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\Form\FormError;
 use Symfony\Component\HttpFoundation\File\Exception\FileNotFoundException;
@@ -486,7 +487,7 @@ class LeadController extends FormController
      *
      * @return \Symfony\Component\HttpFoundation\RedirectResponse|Response
      */
-    public function newAction(Request $request, UserHelper $userHelper, AvatarHelper $avatarHelper, TokenStorageInterface $tokenStorage)
+    public function newAction(Request $request, UserHelper $userHelper, AvatarHelper $avatarHelper, TokenStorageInterface $tokenStorage, ?LoggerInterface $logger = null)
     {
         /** @var LeadModel $model */
         $model = $this->getModel('lead.lead');
@@ -557,7 +558,12 @@ class LeadController extends FormController
                     if ('custom' === $image) {
                         // Check for a file
                         if ($form['custom_avatar']->getData()) {
-                            $this->uploadAvatar($request, $avatarHelper, $lead);
+                            try {
+                                $this->uploadAvatar($request, $avatarHelper, $lead);
+                            } catch (\Exception $e) {
+                                $logger?->error('Contact avatar upload failed: '.$e->getMessage(), ['exception' => $e]);
+                                $this->addFlashMessage('mautic.lead.avatar.upload_failed', [], 'error');
+                            }
                         }
                     }
 
@@ -592,7 +598,7 @@ class LeadController extends FormController
                         $returnUrl = $this->generateUrl('mautic_contact_action', $viewParameters);
                         $template  = 'Mautic\LeadBundle\Controller\LeadController::viewAction';
                     } else {
-                        return $this->editAction($request, $userHelper, $avatarHelper, $lead->getId(), true);
+                        return $this->editAction($request, $userHelper, $avatarHelper, $lead->getId(), true, $logger);
                     }
                 } else {
                     if ($request->get('qf', false)) {
@@ -661,7 +667,7 @@ class LeadController extends FormController
      *
      * @return array|JsonResponse|\Symfony\Component\HttpFoundation\RedirectResponse|Response
      */
-    public function editAction(Request $request, UserHelper $userHelper, AvatarHelper $avatarHelper, $objectId, $ignorePost = false)
+    public function editAction(Request $request, UserHelper $userHelper, AvatarHelper $avatarHelper, $objectId, $ignorePost = false, ?LoggerInterface $logger = null)
     {
         /** @var LeadModel $model */
         $model = $this->getModel('lead.lead');
@@ -758,7 +764,12 @@ class LeadController extends FormController
                         // Check for a file
                         $file = $form['custom_avatar']->getData();
                         if ($file instanceof UploadedFile) {
-                            $this->uploadAvatar($request, $avatarHelper, $lead);
+                            try {
+                                $this->uploadAvatar($request, $avatarHelper, $lead);
+                            } catch (\Exception $e) {
+                                $logger?->error('Contact avatar upload failed: '.$e->getMessage(), ['exception' => $e]);
+                                $this->addFlashMessage('mautic.lead.avatar.upload_failed', [], 'error');
+                            }
 
                             // Note the avatar update so that it can be forced to update
                             $request->getSession()->set('mautic.lead.avatar.updated', true);
@@ -851,13 +862,8 @@ class LeadController extends FormController
     {
         $leadInformation = $request->files->get('lead', []);
         $file            = $leadInformation['custom_avatar'] ?? null;
-        $avatarDir       = $avatarHelper->getAvatarPath(true);
 
-        if (!file_exists($avatarDir)) {
-            mkdir($avatarDir);
-        }
-
-        $file->move($avatarDir, 'avatar'.$lead->getId());
+        $avatarHelper->storeUploadedAvatar($lead, $file);
 
         // remove the file from request
         $request->files->remove('lead');

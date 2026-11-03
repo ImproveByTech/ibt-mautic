@@ -314,6 +314,39 @@ provider's own panel) before trusting the new key.** Once confirmed:
 matches what the hosting provider/your own records say, before typing
 `yes`.
 
+## Configuration changes (default language, allowed extensions, ...) disappear after a while
+
+**Symptom:** a setting changed in the admin Configuration screen saves
+fine and survives a page refresh, but some time later it's back to the
+default — typically after a redeploy or container restart, which looks
+like "after the session ends / after a while without using it".
+
+**Root cause:** Mautic writes every Configuration-screen setting to
+`config/local.php`. `docker/render-local-config.php` used to rewrite that
+file from scratch, from env vars only, on every container boot, and
+`config/` wasn't on any mount — so each redeploy threw away all UI
+settings. `cron`/`worker` never saw them at all (each container had its
+own copy).
+
+**Fix:** the render script now merges (env-managed infra keys win, all
+other keys are kept), and `config/` is bind-mounted to the same host path
+on all three apps — see DEPLOYMENT.md (`mautic-config-<slug>`). Existing
+deployments need the mount added once (create the host dir first, then
+add the mount to `web`, `cron`, `worker`, redeploy) and then the lost
+settings re-entered one last time.
+
+## Default language set to pt_BR, but the UI is back in English after a redeploy
+
+**Root cause:** language packs live in `translations/`, which isn't on a
+mount, so the downloaded pack is gone after every redeploy even though
+`locale` is still `pt_BR` in `local.php`. Mautic silently falls back to
+English.
+
+**Fix:** the pt_BR pack is now committed in `translations/pt_BR/`, so
+it's always in the image (boot log: `Language pack pt_BR already
+installed.`). Set `MAUTIC_LOCALE=pt_BR` to pin it as the default. Other
+locales are downloaded on every boot by `docker/install-language-pack.php`.
+
 ## Changing Configuration > Miscellaneous language (e.g. to pt_BR) throws a 500
 
 **Symptom:** Configuration → Miscellaneous → pick a non-`en_US` language →
@@ -387,3 +420,39 @@ Three things bite in that order, all of them environment and not code:
    `db_password`, `site_url`), then `rm -rf var/cache/prod`. Note this is
    *not* the same database the tests use — `config_test.php` reads `DB_*`
    from `.env.test` and ignores `local.php`.
+
+## Amazon S3 plugin enabled, but new assets never show up in the bucket
+
+**Not a bug - expected upstream behavior.** `MauticCloudStorageBundle`
+(Amazon S3 plugin) is **read-only**: it only lets the asset form *browse*
+an existing bucket and link to a file already there. Mautic never uploads
+anything to S3; assets saved with "Storage location: Local" always go to
+the local `media/files` volume.
+
+**To get uploads into the bucket automatically**, use this fork's S3
+media storage instead: set the `S3_*` env vars (see `DEPLOYMENT.md`,
+"S3 media storage", and `DECISIONS.md`). That is independent of this plugin.
+
+**How to use the plugin:** upload the file to the bucket yourself (AWS console /
+`aws s3 cp`), then in Components > Assets > New pick **Storage location:
+Remote**, click the Amazon S3 browse button and select the file. Mautic
+stores the object's public URL, so that object must be publicly readable
+(or the download/redirect will 403).
+
+**Don't** point this plugin at the backup bucket (`mautic-selfhosted`,
+which holds `database/` dumps) and make it public - use a separate bucket,
+or a bucket policy that grants public `s3:GetObject` only on a dedicated
+prefix (e.g. `assets/*`).
+
+## Uploads still go to local disk after setting the `S3_*` env vars
+
+S3 media storage is on only when **all five** vars are non-empty:
+`S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`,
+`S3_ROOT_DIRECTORY`. If any is missing or empty, Mautic silently behaves
+like upstream (local disk).
+
+**Check:** the vars must be set on **all three apps** (web, cron, worker),
+and `config/local.php` is rendered from env at container boot
+(`docker/render-local-config.php`), so changing env vars requires a
+**redeploy**. Verify with `grep s3_ config/local.php` inside the container.
+Only uploads made after the feature is on go to S3; older files stay local.

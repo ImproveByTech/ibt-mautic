@@ -71,6 +71,15 @@ stock Mautic 7, which still applies here:
    `gclid`, …): small core patch to `AssetBundle\Controller\PublicController`.
 4. **`symfony/dom-crawler` + `symfony/css-selector` as runtime deps** of
    `mautic/core-lib` — without them every email save 500s under `--no-dev`.
+5. **New landing pages/emails/dynamic content/SMS/notifications default to
+   the instance's default language** instead of upstream's hardcoded `en`:
+   `CoreBundle\Form\Extension\DefaultTranslationLanguageExtension`. See
+   `docs/project/DECISIONS.md`; upstreamable as a PR.
+6. **User uploads live in S3 when `S3_*` is set**: assets, builder
+   images, contact avatars, form files and dashboards go to the bucket
+   instead of the VPS disk; off (plain upstream behavior) unless all five
+   vars are set. See `docs/project/DEPLOYMENT.md` and
+   `docs/project/DECISIONS.md`.
 
 Lessons from those deployments that still matter if this project is hosted
 the same way: async messenger broke email delivery and was reverted to
@@ -93,3 +102,6 @@ yet; backups were never automated. Sync jobs with Salesforce run from
   not yet exercised through the admin UI.
 - Hosting/environment for this project not yet defined (local ddev for
   development; production target TBD).
+- 2026-11-03: merged `impulsionantedigital/mautic` 7.x (S3 media storage,
+  Configuration settings persisting across redeploys, default language for
+  new pages/emails, pt_BR translations).

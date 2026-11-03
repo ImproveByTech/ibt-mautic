@@ -21,6 +21,20 @@ as_www_data() {
 render_local_config() {
     echo "Rendering config/local.php from environment..."
     as_www_data "php docker/render-local-config.php"
+    # en_US/pt_BR are in the image; any other MAUTIC_LOCALE has its pack
+    # re-downloaded on every boot (translations/ isn't persisted). Never fatal.
+    as_www_data "php docker/install-language-pack.php" || true
+}
+
+# Keep PHP's own upload limit in line with MAUTIC_ASSET_MAX_SIZE, otherwise
+# anything above php.ini's 32M fails no matter what Mautic is set to.
+apply_upload_limit() {
+    local max="${MAUTIC_ASSET_MAX_SIZE:-}"
+    if [[ "${max}" =~ ^[0-9]+$ ]] && [ "${max}" -gt 32 ]; then
+        printf 'upload_max_filesize = %sM\npost_max_size = %sM\n' "$((max + 1))" "$((max + 2))" \
+            > /usr/local/etc/php/conf.d/zzz-mautic-upload.ini
+        echo "PHP upload limit raised to $((max + 1))M for MAUTIC_ASSET_MAX_SIZE=${max}."
+    fi
 }
 
 wait-for-db.sh
@@ -64,6 +78,7 @@ case "${ROLE}" in
         fi
 
         render_local_config
+        apply_upload_limit
 
         echo "Reloading plugins (installs/updates plugins found in plugins/, e.g. AmazonSesBundle)..."
         as_www_data "php bin/console mautic:plugins:reload --env=prod --no-debug" || true

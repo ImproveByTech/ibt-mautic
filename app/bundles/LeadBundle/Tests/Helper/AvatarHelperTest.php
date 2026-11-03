@@ -6,6 +6,7 @@ namespace Mautic\LeadBundle\Tests\Helper;
 
 use Mautic\CoreBundle\Helper\CoreParametersHelper;
 use Mautic\CoreBundle\Helper\PathsHelper;
+use Mautic\CoreBundle\Storage\MediaStorage;
 use Mautic\CoreBundle\Twig\Helper\AssetsHelper;
 use Mautic\CoreBundle\Twig\Helper\GravatarHelper;
 use Mautic\LeadBundle\Entity\Lead;
@@ -41,7 +42,7 @@ final class AvatarHelperTest extends \PHPUnit\Framework\TestCase
         $defaultAvatarHelperMock       = new DefaultAvatarHelper($assetsHelperMock);
         $gravatarHelperMock            = new GravatarHelper($defaultAvatarHelperMock, $this->createStub(CoreParametersHelper::class), $this->createStub(RequestStack::class));
         $this->leadMock                = $this->createMock(Lead::class);
-        $this->avatarHelper            = new AvatarHelper($assetsHelperMock, $pathsHelperMock, $gravatarHelperMock, $defaultAvatarHelperMock);
+        $this->avatarHelper            = new AvatarHelper($assetsHelperMock, $pathsHelperMock, $gravatarHelperMock, $defaultAvatarHelperMock, $this->createStub(MediaStorage::class));
     }
 
     /**

@@ -4,6 +4,7 @@ namespace Mautic\DashboardBundle\Model;
 
 use Doctrine\ORM\EntityManagerInterface;
 use Mautic\CacheBundle\Cache\CacheProviderTagAwareInterface;
+use Mautic\CoreBundle\Exception\MediaStorageException;
 use Mautic\CoreBundle\Helper\CacheStorageHelper;
 use Mautic\CoreBundle\Helper\CoreParametersHelper;
 use Mautic\CoreBundle\Helper\Filesystem;
@@ -19,6 +20,7 @@ use Mautic\DashboardBundle\Entity\WidgetRepository;
 use Mautic\DashboardBundle\Event\WidgetDetailEvent;
 use Mautic\DashboardBundle\Factory\WidgetDetailEventFactory;
 use Mautic\DashboardBundle\Form\Type\WidgetType;
+use Mautic\DashboardBundle\Helper\DashboardFileSync;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\Filesystem\Exception\IOException;
@@ -46,6 +48,7 @@ class DashboardModel extends FormModel
         UserHelper $userHelper,
         LoggerInterface $mauticLogger,
         private readonly CacheProviderTagAwareInterface $cacheProvider,
+        private readonly ?DashboardFileSync $dashboardFileSync = null,
     ) {
         parent::__construct($em, $security, $dispatcher, $router, $translator, $userHelper, $mauticLogger, $coreParametersHelper);
     }
@@ -127,6 +130,15 @@ class DashboardModel extends FormModel
         $filename = InputHelper::filename($name, 'json');
         $path     = $dir.'/'.$filename;
         $this->filesystem->dumpFile($path, json_encode($this->toArray($name)));
+
+        try {
+            $this->dashboardFileSync?->push($path);
+        } catch (MediaStorageException $e) {
+            // Do not leave a local copy that looks saved but never reached S3.
+            @unlink($path);
+
+            throw new IOException('Could not store the dashboard in S3: '.$e->getMessage(), 0, $e);
+        }
     }
 
     /**

@@ -23,6 +23,7 @@ use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\Filesystem\Filesystem;
 use Symfony\Component\Form\FormFactoryInterface;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\RequestStack;
 use Symfony\Component\HttpFoundation\Response;
@@ -189,7 +190,7 @@ class ResultController extends CommonFormController
         );
     }
 
-    public function downloadFileAction(int $submissionId, string $field, FormUploader $formUploader): BinaryFileResponse
+    public function downloadFileAction(int $submissionId, string $field, FormUploader $formUploader): Response
     {
         /** @var SubmissionResultLoader $submissionResultLoader */
         $submissionResultLoader = $this->getModel('form.submission_result_loader');
@@ -215,10 +216,20 @@ class ResultController extends CommonFormController
         }
 
         $fileName = $results[$field];
-        $file     = $formUploader->getCompleteFilePath($fieldEntity, $fileName);
+
+        try {
+            $file = $formUploader->getCompleteFilePath($fieldEntity, $fileName);
+            $url  = $formUploader->getFileUrl($fieldEntity, $fileName);
+        } catch (\InvalidArgumentException) {
+            throw $this->createNotFoundException();
+        }
 
         $fs = new Filesystem();
         if (!$fs->exists($file)) {
+            if (null !== $url) {
+                return new RedirectResponse($url);
+            }
+
             throw $this->createNotFoundException();
         }
 
@@ -244,10 +255,19 @@ class ResultController extends CommonFormController
             $this->throwAccessDenied();
         }
 
-        $file = $formUploader->getCompleteFilePath($fieldEntity, $fileName);
+        try {
+            $file = $formUploader->getCompleteFilePath($fieldEntity, $fileName);
+            $url  = $formUploader->getFileUrl($fieldEntity, $fileName);
+        } catch (\InvalidArgumentException) {
+            throw $this->createNotFoundException();
+        }
 
         $fs   = new Filesystem();
         if (!$fs->exists($file)) {
+            if (null !== $url) {
+                return new RedirectResponse($url);
+            }
+
             throw $this->createNotFoundException();
         }
 
@@ -386,7 +406,7 @@ class ResultController extends CommonFormController
     }
 
     /**
-     * @return \Symfony\Component\HttpFoundation\JsonResponse|\Symfony\Component\HttpFoundation\RedirectResponse
+     * @return \Symfony\Component\HttpFoundation\JsonResponse|RedirectResponse
      */
     public function batchDeleteAction(Request $request)
     {

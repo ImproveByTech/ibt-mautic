@@ -71,9 +71,9 @@ RUN composer install --no-dev --no-interaction --optimize-autoloader --prefer-di
 
 # Runtime writable paths
 #
-# translations/ is included because language packs (anything besides the
-# bundled en_US) are downloaded and extracted here on-demand from the UI
-# (Configuration > Miscellaneous) at runtime by www-data, not at build time.
+# translations/ is included because language packs other than the bundled
+# en_US and the committed translations/pt_BR are downloaded and extracted
+# here on-demand at runtime by www-data (UI or install-language-pack.php).
 RUN mkdir -p var/cache var/logs var/spool var/tmp media/files media/images media/assets translations \
     && chown -R www-data:www-data /var/www/html/var /var/www/html/media /var/www/html/config /var/www/html/translations \
     && chmod -R ug+rwX /var/www/html/var /var/www/html/media /var/www/html/config /var/www/html/translations
@@ -83,6 +83,7 @@ COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY docker/worker-consume.sh /usr/local/bin/worker-consume.sh
 COPY docker/render-local-config.php /var/www/html/docker/render-local-config.php
 COPY docker/is-schema-installed.php /var/www/html/docker/is-schema-installed.php
+COPY docker/install-language-pack.php /var/www/html/docker/install-language-pack.php
 COPY docker/wait-for-db.sh /usr/local/bin/wait-for-db.sh
 
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/wait-for-db.sh /usr/local/bin/worker-consume.sh

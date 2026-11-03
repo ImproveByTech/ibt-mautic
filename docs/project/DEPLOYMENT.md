@@ -48,8 +48,24 @@ MAUTIC_ADMIN_PASSWORD=<strong password, avoid quotes/backticks/$>
 ```
   `MAUTIC_ADMIN_EMAIL`/`_PASSWORD` only matter on the very first install
   (creating the admin user) — safe to remove after.
-- **Storage**: add **three separate Bind mounts** — for `media/files`,
-  `media/images`, and `media/assets` individually. **Do not** bind-mount
+
+  **Optional, pins admin Configuration-screen settings** (set on all three
+  apps). Each one, when set, is re-applied on every boot and wins over
+  whatever was saved in the UI; leave it unset to manage that setting
+  through the UI instead. API enabled is already `MAUTIC_API_ENABLED`
+  (default `true`).
+```
+MAUTIC_LOCALE=pt_BR                        # pt_BR pack ships in the image
+MAUTIC_DEFAULT_TIMEZONE=America/Sao_Paulo  # PHP timezone id, not "sao paulo"
+MAUTIC_ASSET_MAX_SIZE=254                  # MB; also raises PHP's upload limit
+MAUTIC_ASSET_ALLOWED_EXTENSIONS=csv,doc,docx,epub,gif,jpg,jpeg,mpg,mpeg,mp3,odt,odp,ods,pdf,png,ppt,pptx,tif,tiff,txt,xls,xlsx,wav,html,htm,shtml
+```
+- **Storage**: add **four separate Bind mounts** — `config/` (holds
+  `local.php`, i.e. everything saved in the admin Configuration screen)
+  plus `media/files`, `media/images`, and `media/assets` individually.
+  Without the `config/` mount, Configuration changes (default language,
+  allowed asset extensions, ...) are lost on every redeploy and aren't
+  seen by `cron`/`worker`. **Do not** bind-mount
   the whole `/var/www/html/media` directory: it also holds files generated
   at build time (`media/js/libraries.js`, `media/css/libraries.css`,
   `media/css/offline.css`), and mounting an empty host directory over the
@@ -59,11 +75,15 @@ MAUTIC_ADMIN_PASSWORD=<strong password, avoid quotes/backticks/$>
   ```bash
   mkdir -p /etc/easypanel/mautic-media-<slug>/{files,images,assets}
   chmod -R 777 /etc/easypanel/mautic-media-<slug>
+  mkdir -p /etc/easypanel/mautic-config-<slug>
+  chown 33:33 /etc/easypanel/mautic-config-<slug>   # www-data; holds DB password, so no 777
+  chmod 770 /etc/easypanel/mautic-config-<slug>
   ```
   Swarm bind mounts fail if the host path doesn't already exist. Then add:
 
   | Host | Container |
   |---|---|
+  | `/etc/easypanel/mautic-config-<slug>` | `/var/www/html/config` |
   | `/etc/easypanel/mautic-media-<slug>/files` | `/var/www/html/media/files` |
   | `/etc/easypanel/mautic-media-<slug>/images` | `/var/www/html/media/images` |
   | `/etc/easypanel/mautic-media-<slug>/assets` | `/var/www/html/media/assets` |
@@ -76,7 +96,7 @@ MAUTIC_ADMIN_PASSWORD=<strong password, avoid quotes/backticks/$>
 - Same repo/branch/Dockerfile.
 - **Deploy tab → Comando**: `/usr/local/bin/entrypoint.sh cron` (the bare word `cron` fails - see TROUBLESHOOTING.md)
 - Same env vars as web, minus `MAUTIC_ADMIN_*`.
-- Same three bind mounts, same host paths as web.
+- Same four bind mounts, same host paths as web.
 - No domain. Deploy.
 - Expect, every minute: `job succeeded` for `mautic:messages:send`,
   `mautic:broadcasts:send`, `mautic:reports:scheduler` in the logs.
@@ -85,7 +105,7 @@ MAUTIC_ADMIN_PASSWORD=<strong password, avoid quotes/backticks/$>
 
 - Same repo/branch/Dockerfile.
 - **Comando**: `/usr/local/bin/entrypoint.sh worker`
-- Same env vars (minus admin), same three bind mounts.
+- Same env vars (minus admin), same four bind mounts.
 - No domain. Deploy.
 - Expect: `Consuming messages from transport "failed".` — it stays quiet
   unless something fails (or unless async transports are turned on, see
@@ -111,6 +131,55 @@ MAUTIC_ADMIN_PASSWORD=<strong password, avoid quotes/backticks/$>
     → "Send test email"** instead (builds a `MauticMessage`, sends
     synchronously to the logged-in user's address), or send a real email to
     a test contact.
+
+## S3 media storage (user uploads)
+
+Optional. When on, uploads (assets, builder images, avatars, form files,
+dashboards) go to S3 instead of the VPS disk. Set these on **all three
+apps** (web, cron and worker; the worker sends emails with attachments):
+```
+S3_BUCKET=mautic-selfhosted
+S3_REGION=sa-east-1
+S3_ACCESS_KEY_ID=<IAM user key>
+S3_SECRET_ACCESS_KEY=<IAM user secret>
+S3_ROOT_DIRECTORY=gpsdapena        # one per client, e.g. trilhasdearuanda
+```
+The feature is **on only when all five are set**; otherwise Mautic uses the
+local disk exactly like upstream. Removing a variable turns it off on the
+next boot. Public URL of an object:
+`https://<bucket>.s3.<region>.amazonaws.com/<root>/media/...`.
+
+- **Only uploads made after the feature is turned on** go to S3. Files
+  already on disk are not migrated; they keep working on that server only.
+- **Bucket**: in the bucket's "Block Public Access" settings, "Block public
+  access to buckets and objects granted through *new* public bucket or
+  access point policies" (and the "any" variant) must be OFF so the policy
+  below can take effect. No object ACLs are used.
+- **Bucket policy** (public read of `media/files/` and `media/images/` only;
+  `database/`, `media/dashboards/` and anything else stays private). Replace `mautic-selfhosted`:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "PublicReadMautic",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "s3:GetObject",
+      "Resource": [
+        "arn:aws:s3:::mautic-selfhosted/*/media/files/*",
+        "arn:aws:s3:::mautic-selfhosted/*/media/images/*"
+      ]
+    }
+  ]
+}
+```
+`media/dashboards/` stays private on purpose: Mautic reads those files with
+  its own IAM credentials, and they don't need public links.
+- **IAM user** needs `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` on
+  `arn:aws:s3:::<bucket>/<root>/*` and `s3:ListBucket` on
+  `arn:aws:s3:::<bucket>` (optionally limited with an `s3:prefix`
+  condition to `<root>/*`).
 
 ## Mailer DSN reference
 

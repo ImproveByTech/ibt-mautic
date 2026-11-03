@@ -59,6 +59,65 @@ test code only, not ported yet.
 (create object/fields/items, segment filter, campaign condition, email
 token).
 
+## User uploads live in S3 (`MediaStorage`)
+
+Spec: `docs/specs/2026-10-28-s3-uploads.md`. Setup: `DEPLOYMENT.md`. Goal:
+the VPS is disposable - every upload goes to the bucket and the DB keeps
+the URL, so a new server only needs the same DB + env vars.
+
+- **Per-client prefix in a shared bucket** (`S3_ROOT_DIRECTORY`), not a
+  bucket per client.
+- **Off unless all five vars are set** (`S3_BUCKET`, `S3_REGION`,
+  `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_ROOT_DIRECTORY`):
+  `MediaStorage::isEnabled()`. Otherwise upstream behavior; tests and ddev
+  need no S3. Set on web, cron and worker.
+- **Public-read only `media/files/*` and `media/images/*`** (bucket
+  policy, no object ACLs). `media/dashboards/` stays private and is read
+  with the IAM credentials. Form uploads are public too (user's decision,
+  LGPD exposure accepted).
+- **Assets are pushed on save** and stored as `storageLocation=remote`
+  with the canonical S3 URL. Downloads are still tracked by
+  `PublicController`, then redirected. Editing such an asset shows
+  "Remote" + URL in the form.
+- **Admin preview of a remote asset redirects** instead of fetching
+  server-side (SSRF / `file://` read); `Asset::getFileContents()` stays
+  upstream.
+- **Random 16-hex name prefix** for form uploads and builder images: an S3
+  key must never be shared by two uploads (client file names are not unique
+  once local dirs are emptied; same-key overwrite would change sent
+  emails). Dashboards keep readable, user-scoped names (same-user overwrite
+  is upstream's behavior).
+- **elFinder `upload_overwrite=false`** (auto-rename), also in local mode.
+  elFinder uses a small custom Flysystem adapter over `MediaStorage`
+  (scoped to `media/images/`) instead of `league/flysystem-aws-s3-v3`:
+  Composer was unavailable when this was built and hand-editing
+  `composer.lock` was risky. It can be swapped for the official adapter
+  later.
+- **elFinder thumbnails stay on the site**: `tmb_path` is local disk, so
+  `tmb_url` uses its own env var `MAUTIC_EL_FINDER_TMB_URL` (always
+  `<site_url>/<image_path>/.tmb`), not the S3 `MAUTIC_EL_FINDER_URL`.
+- **`lead_avatars/` is hidden and locked in elFinder** (root `attributes`
+  rule, also in local mode): deleting that folder would otherwise
+  `deletePrefix` every contact avatar.
+- **Asset objects are flat keys** (`media/files/<name>`); an asset can never
+  delete or canonicalize a form-submission object, and the old object of a
+  replaced file is deleted in `ASSET_POST_SAVE`, not before the flush.
+- **Content-type hardening** in `MediaStorage`: inline only
+  png/jpeg/gif/webp/pdf; svg keeps its type but is `attachment`;
+  html/xml/js become `application/octet-stream` + `attachment`; anything
+  else is `attachment`. Anonymous visitors can upload via forms, so the
+  public bucket must never serve active content inline.
+- **Avatars are content-checked** with `getimagesize()` (also with S3 off:
+  local avatars live on Mautic's own origin, so an HTML body there is a
+  worse XSS vector).
+- **Deletes**: only under our `<root>/media/` prefix (`keyFromPublicUrl`
+  is the "is this ours?" check; user-typed remote URLs are never touched)
+  and only when no other asset shares the key. S3 failures after an
+  irreversible DB delete are logged, not thrown. A failed S3 write always
+  surfaces as an error - never a "successful" upload left on local disk.
+- **No migration**: files uploaded before the feature was on keep working
+  on that server but are not copied to S3 (and not carried to a new VPS).
+
 ## Remote assets forward the click's campaign query params (core patch)
 
 `AssetBundle\Controller\PublicController::remoteRedirectResponse()` used to
@@ -112,16 +171,42 @@ apps only differ in what they run, not what they contain.
 
 ## `config/local.php` is regenerated from env vars on every boot
 
-`docker/render-local-config.php` writes `config/local.php` fresh every time
-a container starts, for all three roles. Nothing persists it across
-restarts or between containers.
+`docker/render-local-config.php` runs every time a container starts, for
+all three roles. It **merges** into the existing `config/local.php`: the
+infrastructure keys it manages (DB, `site_url`, `secret_key`, mailer
+from, API flags, trusted proxies/hosts) are forced from env vars, and
+every other key already in the file is kept. `config/` is a bind mount
+shared by `web`, `cron` and `worker` (same host path), so it survives
+redeploys and all three roles see the same file.
 
-**Why:** EasyPanel/Docker is the source of truth for configuration (env
-vars per app), not a file baked into an image or living on a volume. This
-also means the Mautic admin UI's "Configuration" screens are **not** where
-you change infrastructure-level settings (DB, mailer, site URL) — they get
-overwritten on the next restart. Only settings genuinely meant to be
-edited by admins through the UI (most of Configuration) are safe there.
+**Why:** EasyPanel/Docker env vars stay the source of truth for
+infrastructure settings — editing those in the admin UI's Configuration
+screen gets overwritten on the next restart. But Mautic stores *all* of
+its UI-editable Configuration (default language, allowed asset
+extensions, ...) in that same `local.php`, so the file itself has to
+persist. The original version of this script overwrote the file from
+scratch with no mount, which silently wiped every UI setting on each
+redeploy (see TROUBLESHOOTING, "Configuration changes disappear").
+
+A few UI settings can also be **pinned per client** from optional env vars
+(`MAUTIC_LOCALE`, `MAUTIC_DEFAULT_TIMEZONE`, `MAUTIC_ASSET_MAX_SIZE`,
+`MAUTIC_ASSET_ALLOWED_EXTENSIONS`). Set → forced on every boot like the
+infra keys; unset → the UI owns it. Pinning was chosen over "default only
+if missing" because Mautic writes *every* field of every tab to
+`local.php` on the first Save, so a fill-if-missing default would stop
+applying the moment anyone saves the Configuration screen.
+
+Two things ride along so a pinned value actually works:
+- `MAUTIC_LOCALE` → the **pt_BR pack is committed** in
+  `translations/pt_BR/` (~830 KB, `.gitignore` exception), so it's in the
+  image with no network dependency at boot. For any other locale,
+  `docker/install-language-pack.php` downloads the pack from
+  `language-packs.mautic.com` on every boot (`translations/` isn't
+  persisted; same source/layout as the UI download). To refresh pt_BR:
+  `rm -rf translations/pt_BR && MAUTIC_LOCALE=pt_BR php docker/install-language-pack.php`, then commit.
+- `MAUTIC_ASSET_MAX_SIZE` above 32 → `entrypoint.sh` writes
+  `zzz-mautic-upload.ini` raising PHP's `upload_max_filesize`/
+  `post_max_size` (named `zzz-` so it loads after `zz-mautic.ini`).
 
 ## Mail/queue transports are env vars, not `local.php` params
 
@@ -272,3 +357,15 @@ EasyPanel runs Docker in Swarm mode. Unlike plain `docker run`, Swarm does
 `/etc/easypanel/mautic-media-<slug>`) before configuring the bind mount in
 each app (web/cron/worker all point at the same host path so they share
 uploaded media/files).
+
+## New translatable content defaults to the configured language
+
+Upstream's `TranslationEntityTrait` hardcodes `$language = 'en'` for
+landing pages, emails, dynamic content, SMS and notifications, so the
+"Idioma" field on a new item always showed English even with Default
+language = `pt_BR`. `CoreBundle\Form\Extension\DefaultTranslationLanguageExtension`
+(a `FormType` extension, auto-registered) swaps that `'en'` for the
+`locale` parameter on `PRE_SET_DATA`, only for **new** entities still on
+the hardcoded `'en'`; existing items, explicit choices and English
+instances are untouched. Chosen over patching the five models'
+`getEntity()` so it's one small, upstreamable file with a unit test.

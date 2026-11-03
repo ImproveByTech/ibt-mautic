@@ -256,4 +256,40 @@ class AssetRepository extends CommonRepository
 
         return $asset;
     }
+
+    /**
+     * Remote paths of other assets (different id) that start with the given URL prefix.
+     *
+     * @return list<string>
+     */
+    public function getOtherRemotePathsWithPrefix(string $prefix, ?int $excludeId): array
+    {
+        $qb = $this->createQueryBuilder('a')
+            ->select('a.remotePath')
+            ->where('a.remotePath LIKE :prefix')
+            ->setParameter('prefix', addcslashes($prefix, '%_\\').'%');
+        if (null !== $excludeId) {
+            $qb->andWhere('a.id != :id')->setParameter('id', $excludeId);
+        }
+
+        return array_column($qb->getQuery()->getArrayResult(), 'remotePath');
+    }
+
+    /**
+     * Whether another asset (different id) is still local with the same path.
+     */
+    public function existsOtherLocalWithPath(string $path, ?int $excludeId): bool
+    {
+        $qb = $this->createQueryBuilder('a')
+            ->select('COUNT(a.id)')
+            ->where('a.path = :path')
+            ->andWhere('a.storageLocation = :local')
+            ->setParameter('path', $path)
+            ->setParameter('local', 'local');
+        if (null !== $excludeId) {
+            $qb->andWhere('a.id != :id')->setParameter('id', $excludeId);
+        }
+
+        return (int) $qb->getQuery()->getSingleScalarResult() > 0;
+    }
 }

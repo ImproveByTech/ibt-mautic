@@ -819,6 +819,7 @@ return [
                     'mautic.helper.paths',
                     'mautic.helper.twig.gravatar',
                     'mautic.helper.twig.default_avatar',
+                    'mautic.storage.media',
                 ],
                 'alias' => 'lead_avatar',
             ],

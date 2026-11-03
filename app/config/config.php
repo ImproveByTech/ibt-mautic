@@ -393,12 +393,23 @@ $container->loadFromExtension('fm_elfinder', [
                             'adapter_service' => 'mautic.core.service.local_file_adapter',
                             'options'         => [],
                         ],
-                        'upload_allow'  => ['image/png', 'image/jpg', 'image/jpeg', 'image/gif'],
-                        'upload_deny'   => ['all'],
+                        'upload_overwrite' => false, // auto-rename on name collision instead of replacing (S3 objects may be embedded in sent emails)
+                        'upload_allow'     => ['image/png', 'image/jpg', 'image/jpeg', 'image/gif'],
+                        'upload_deny'      => ['all'],
+                        // Contact avatars live under lead_avatars/: hide and lock them so a folder delete cannot wipe them all.
+                        'attributes'       => [
+                            [
+                                'pattern' => '/^\/lead_avatars(\/|$)/',
+                                'read'    => false,
+                                'write'   => false,
+                                'locked'  => true,
+                                'hidden'  => true,
+                            ],
+                        ],
                         'accepted_name' => '/^[\w\x{0300}-\x{036F}][\w\x{0300}-\x{036F}\s\.\%\-]*$/u', // Supports diacritic symbols
                         'url'           => '%env(resolve:MAUTIC_EL_FINDER_URL)%', // We need to specify URL in case mod_rewrite is disabled
                         'tmb_path'      => '%env(resolve:MAUTIC_EL_FINDER_PATH)%/.tmb/',
-                        'tmb_url'       => '%env(resolve:MAUTIC_EL_FINDER_URL)%/.tmb/',
+                        'tmb_url'       => '%env(resolve:MAUTIC_EL_FINDER_TMB_URL)%/', // always the site URL: thumbnails are generated on local disk
                     ],
                 ],
             ],

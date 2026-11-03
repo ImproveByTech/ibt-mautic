@@ -162,8 +162,10 @@ return [
                 ],
             ],
             'mautic.core.service.local_file_adapter' => [
-                'class'     => Mautic\CoreBundle\Service\LocalFileAdapterService::class,
+                'class'     => League\Flysystem\FilesystemAdapter::class,
+                'factory'   => [Mautic\CoreBundle\Service\ElFinderAdapterFactory::class, 'create'],
                 'arguments' => [
+                    'mautic.storage.media',
                     '%env(resolve:MAUTIC_EL_FINDER_PATH)%',
                 ],
             ],
@@ -873,6 +875,11 @@ return [
     ],
 
     'parameters' => [
+        's3_bucket'                       => '',
+        's3_region'                       => '',
+        's3_access_key_id'                => '',
+        's3_secret_access_key'            => '',
+        's3_root_directory'               => '',
         'site_url'                        => '',
         'webroot'                         => '',
         '404_page'                        => '',

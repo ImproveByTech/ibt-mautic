@@ -48,14 +48,22 @@ class SetContactAvatarFormSubscriber implements EventSubscriberInterface
                     if (empty($results[$field->getAlias()])) {
                         break;
                     }
+                    $localCopy = null;
                     try {
-                        $filePath = $this->uploader->getCompleteFilePath($field, $results[$field->getAlias()]);
+                        $fileName  = $results[$field->getAlias()];
+                        $filePath  = $this->uploader->getLocalCopy($field, $fileName);
+                        $localCopy = $filePath !== $this->uploader->getCompleteFilePath($field, $fileName) ? $filePath : null;
                         $this->avatarHelper->createAvatarFromFile($contact, $filePath);
                         $contact->setPreferredProfileImage('custom');
                         $this->leadModel->saveEntity($contact);
 
                         return;
                     } catch (\Exception) {
+                    } finally {
+                        // Only ever remove a temp copy downloaded from S3, never the original local upload.
+                        if (null !== $localCopy && is_file($localCopy)) {
+                            @unlink($localCopy);
+                        }
                     }
 
                     break;

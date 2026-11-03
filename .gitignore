@@ -145,4 +145,7 @@ tests/**/*.sql
 !/themes/blank.png
 !/themes/blank-big.png
 
-/translations
+/translations/*
+# pt_BR ships in the image (this fork's clients are Brazilian); other
+# packs are still downloaded at runtime. See docs/project/DECISIONS.md.
+!/translations/pt_BR/

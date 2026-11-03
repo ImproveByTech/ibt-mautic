@@ -209,6 +209,8 @@ return [
                 'arguments' => [
                     'mautic.helper.file_uploader',
                     'mautic.helper.core_parameters',
+                    'mautic.storage.media',
+                    'monolog.logger.mautic',
                 ],
             ],
             'mautic.form.helper.token' => [
