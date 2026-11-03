@@ -127,6 +127,56 @@ class SalesforceIntegration extends CrmAbstractIntegration
         return 'api refresh_token';
     }
 
+    /**
+     * Salesforce External Client Apps require PKCE (RFC 7636) for the web server flow,
+     * so a code verifier is generated per login attempt and kept in the session until the callback.
+     */
+    public function getAuthLoginUrl(): string
+    {
+        $url = parent::getAuthLoginUrl();
+
+        if (!$this->requestStack->getCurrentRequest()?->hasSession()) {
+            return $url;
+        }
+
+        $codeVerifier = $this->base64UrlEncode(random_bytes(32));
+        $this->requestStack->getSession()->set($this->getPkceSessionKey(), $codeVerifier);
+
+        return $url
+            .'&code_challenge='.$this->base64UrlEncode(hash('sha256', $codeVerifier, true))
+            .'&code_challenge_method=S256';
+    }
+
+    /**
+     * @return bool|string false if no error; otherwise the error string
+     */
+    public function authCallback($settings = [], $parameters = [])
+    {
+        $isRefresh = !empty($settings['use_refresh_token']) || !empty($settings['refresh_token']);
+
+        if (!$isRefresh && $this->requestStack->getCurrentRequest()?->hasSession()) {
+            $session      = $this->requestStack->getSession();
+            $codeVerifier = $session->get($this->getPkceSessionKey());
+            $session->remove($this->getPkceSessionKey());
+
+            if ($codeVerifier) {
+                $parameters['code_verifier'] = $codeVerifier;
+            }
+        }
+
+        return parent::authCallback($settings, $parameters);
+    }
+
+    private function getPkceSessionKey(): string
+    {
+        return $this->getName().'_pkce_code_verifier';
+    }
+
+    private function base64UrlEncode(string $data): string
+    {
+        return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
+    }
+
     public function getApiUrl(): string
     {
         return sprintf('%s/services/data/v34.0/sobjects', $this->keys['instance_url']);

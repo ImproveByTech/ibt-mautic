@@ -456,3 +456,22 @@ and `config/local.php` is rendered from env at container boot
 (`docker/render-local-config.php`), so changing env vars requires a
 **redeploy**. Verify with `grep s3_ config/local.php` inside the container.
 Only uploads made after the feature is on go to S3; older files stay local.
+
+## Salesforce "Authorize App" shows `error=invalid_request&error_description=missing required code challenge`
+
+**Symptom:** clicking *Authorize App* in the Salesforce plugin opens
+`login.salesforce.com` / `test.salesforce.com/services/oauth2/authorize?...`
+and the page shows only that error string.
+
+**Root cause:** the Salesforce app is an External Client App with
+"Require Proof Key for Code Exchange (PKCE)" locked on, and the upstream
+plugin didn't send a `code_challenge`.
+
+**Fix:** this fork now sends PKCE (see `DECISIONS.md`, "Salesforce plugin
+sends PKCE"). Deploy a build that includes it and authorize again — no
+Salesforce setting needs changing. If it still fails, check that the app
+exists in the right org (the plugin's *sandbox* option means
+`test.salesforce.com`, so the app must be in the sandbox), that the
+Callback URL matches the one shown in the plugin exactly, and that the
+scopes include `api` and `refresh_token, offline_access`.
+

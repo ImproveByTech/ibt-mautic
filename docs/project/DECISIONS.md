@@ -5,6 +5,33 @@ setup and the few code patches it carries on top of upstream. Newest at
 the top. Link back here from commit messages when a
 decision changes.
 
+## Salesforce plugin sends PKCE (S256) on the OAuth web server flow
+
+Salesforce **External Client Apps** (the default replacement for Connected
+Apps) ship with "Require Proof Key for Code Exchange (PKCE)" locked on
+("To change this required setting, contact Support"), alongside
+mandatory refresh token rotation and a 30-day idle refresh token TTL.
+Upstream's `SalesforceIntegration` only did the classic
+`client_id`/`client_secret` authorization code flow, so authorize failed
+with `missing required code challenge`.
+
+**Patch:** `SalesforceIntegration::getAuthLoginUrl()` generates a random
+`code_verifier` per login attempt, stores it in the session under
+`Salesforce_pkce_code_verifier` and appends `code_challenge` (S256) +
+`code_challenge_method=S256`. `authCallback()` sends that verifier as
+`code_verifier` on the `authorization_code` exchange and removes it from
+the session; refresh token calls don't touch it. Client secret is still
+sent, so apps with "Require secret for Web Server Flow" keep working.
+Covered by `plugins/MauticCrmBundle/Tests/Integration/SalesforceIntegrationPkceTest.php`.
+
+**Why not turn PKCE off:** not possible on External Client Apps without a
+Support ticket, and creating classic Connected Apps is being phased out.
+
+**Refresh token rotation** needed no change: `extractAuthKeys()` →
+`mergeApiKeys()` overwrites the stored `refresh_token` with the new one
+from each refresh response. Keep the sync cron running at least monthly
+so the refresh token doesn't hit the 30-day idle TTL.
+
 ## Custom Objects plugin vendored into `plugins/CustomObjectsBundle` and ported to Mautic 7
 
 Needed for the Salesforce integration (see
