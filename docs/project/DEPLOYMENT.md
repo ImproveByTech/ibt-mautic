@@ -99,13 +99,18 @@ MAUTIC_ADMIN_PASSWORD=<strong password, avoid quotes/backticks/$>
 - If using the SES API DSN (`mautic+ses+api://...`), point an SNS topic's
   HTTPS subscription at `https://mautic.yourdomain.com/mailer/callback`
   for bounce/complaint handling.
-- Test real sending from the web app's Terminal:
-  ```bash
-  php bin/console mailer:test you@yourdomain.com --env=prod
-  ```
-  (Tests the actual configured transport — more reliable than the
-  panel's own "Test Send" button, which per `docs/project/DECISIONS.md`
-  isn't wired to the same code path in some cases.)
+- Test real sending:
+  - **`smtp://` DSN** — from the web app's Terminal:
+    ```bash
+    php bin/console mailer:test you@yourdomain.com --env=prod
+    ```
+  - **`mautic+ses+api://` DSN** — `mailer:test` does **not** work: it fails
+    with "Message must be an instance of …MauticMessage" before reaching AWS
+    (the plugin only accepts Mautic's own message class; Symfony's command
+    builds a plain `Email`). Use **Settings → Configuration → Email Settings
+    → "Send test email"** instead (builds a `MauticMessage`, sends
+    synchronously to the logged-in user's address), or send a real email to
+    a test contact.
 
 ## Mailer DSN reference
 
@@ -120,7 +125,14 @@ credentials; the plugin's own docs warn against reusing an SMTP user here):
 ```
 MAUTIC_MAILER_DSN=mautic+ses+api://ACCESS_KEY:SECRET_KEY@default?region=us-east-1&ratelimit=14
 ```
-IAM policy needed: `ses:SendEmail`, `ses:SendRawEmail`, `ses:GetSendQuota`.
+IAM policy needed: `ses:SendEmail`, `ses:SendRawEmail`, `ses:GetAccount`
+(the plugin uses the SESv2 API — it reads the send quota via `GetAccount`, not
+the v1 `GetSendQuota`). `region` must be the SES region where the sender
+identity is verified. If the secret key contains `/` or `+`, URL-encode them
+(`%2F`, `%2B`) or the DSN won't parse. Only this scheme enables the SNS
+bounce/complaint callback — with an `smtp://` DSN, `/mailer/callback`
+returns 404 and SNS events are ignored. Set it on **all three apps**
+(web, cron, worker).
 
 ## Async sending (currently ON in production)
 
