@@ -254,6 +254,11 @@ trait FieldsTypeTrait
                 'start'                => fn (Options $options): int => (1 === (int) $options['page']) ? 0 : ((int) $options['page'] - 1) * (int) $options['limit'],
             ]
         );
+
+        // IBT fork: show every integration field on one page. The AJAX pagination doesn't load
+        // other pages and only the visible page's mappings get submitted, so callers' limit/page is ignored.
+        $resolver->setNormalizer('limit', fn (Options $options): int => max(1, $options['totalFields']));
+        $resolver->setNormalizer('start', fn (): int => 0);
     }
 
     protected function buildFieldView(FormView $view, array $options)

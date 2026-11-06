@@ -475,3 +475,14 @@ exists in the right org (the plugin's *sandbox* option means
 Callback URL matches the one shown in the plugin exactly, and that the
 scopes include `api` and `refresh_token, offline_access`.
 
+## Plugin Contact/Company Mapping only lets you map the first page of fields
+
+**Symptom:** in a plugin's config modal (e.g. Salesforce → *Contact
+Mapping*) the fields are paginated ("235 items, 8 pages in total") and
+clicking another page does nothing, so most fields can't be mapped. No
+error in the browser console.
+
+**Fix:** this fork shows every field on a single page (see `DECISIONS.md`,
+"Integration field mapping shows all fields on one page"). Deploy a build
+that includes it and reopen the modal.
+

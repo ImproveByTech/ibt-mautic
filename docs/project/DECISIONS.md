@@ -5,6 +5,24 @@ setup and the few code patches it carries on top of upstream. Newest at
 the top. Link back here from commit messages when a
 decision changes.
 
+## Integration field mapping shows all fields on one page (no pagination)
+
+The plugin config modal's *Contact Mapping* / *Company Mapping* tabs
+paginated integration fields (`default_pagelimit`, 30 per page). With
+Salesforce that's 235+ contact fields over 8 pages, and the AJAX page
+links didn't load the other pages, so most fields couldn't be mapped.
+Pagination is also lossy by design: only the visible page's rows are
+submitted on save.
+
+**Patch:** `FieldsTypeTrait::configureFieldOptions()` normalizes `limit`
+to the total number of integration fields and `start` to `0`, so
+`FieldsType` and `CompanyFieldsType` always render every field and the
+pagination footer is never shown. Callers' `limit`/`page` are ignored.
+Applies to every legacy (`AbstractIntegration`) plugin, not just
+Salesforce. Trade-off: a larger modal (one select per field), acceptable
+for a one-off setup screen. Covered by
+`app/bundles/PluginBundle/Tests/Form/Type/FieldsTypeTest.php`.
+
 ## Salesforce plugin sends PKCE (S256) on the OAuth web server flow
 
 Salesforce **External Client Apps** (the default replacement for Connected
