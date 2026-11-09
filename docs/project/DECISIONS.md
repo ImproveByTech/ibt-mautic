@@ -414,3 +414,21 @@ language = `pt_BR`. `CoreBundle\Form\Extension\DefaultTranslationLanguageExtensi
 the hardcoded `'en'`; existing items, explicit choices and English
 instances are untouched. Chosen over patching the five models'
 `getEntity()` so it's one small, upstreamable file with a unit test.
+
+## Branding: logo replaced in-place in the core SVGs
+
+There is no config/theme hook for the admin logo: `navbar.html.twig` and
+`Security/base.html.twig` inline `@MauticCore/Assets/images/logo--expanded.svg`
+and `logo--minimized.svg` via `source()`. We overwrite those two files with
+the IBT logo. Because they're inlined into the HTML, the SVGs must:
+
+- carry explicit `width`/`height` (upstream sizes its logo via the
+  `mautic-logo-figure` class, which ours don't have) — expanded `220×48`,
+  minimized `20×48`, matching the 48px header;
+- use namespaced classes (`ibt-logo-e-*`, `ibt-logo-m-*`) — a `<style>` inside
+  an inlined SVG is global CSS, and both SVGs are in the navbar DOM at once;
+- have no `id` / `<?xml?>` prolog (Illustrator exports `id="Camada_1"` in both).
+
+The login page reuses the minimized SVG at a larger size via a one-line
+`<style>` in `Security/base.html.twig` (no SCSS change, so no asset rebuild).
+Expect merge conflicts on these files if upstream touches its logo.
